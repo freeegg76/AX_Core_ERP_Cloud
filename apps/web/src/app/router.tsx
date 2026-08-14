@@ -13,6 +13,9 @@ import { ClientPage } from '@/features/partner/ClientPage';
 import { VendorPage } from '@/features/partner/VendorPage';
 import { PipelinePage } from '@/features/sales/PipelinePage';
 import { ContractPage } from '@/features/sales/ContractPage';
+import { GlPage } from '@/features/finance/GlPage';
+import { DimensionPage } from '@/features/finance/DimensionPage';
+import { BankAccountPage } from '@/features/finance/BankAccountPage';
 
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
@@ -39,6 +42,10 @@ export const router = createBrowserRouter([
       // Phase 4 — SALES (설계서 §16 : 파이프라인 → 액티비티 → 계약)
       { path: 'sales/pipelines', element: <PipelinePage /> },
       { path: 'sales/contracts', element: <ContractPage /> },
+      // Phase 5 — FINANCE 기준정보 (설계서 §16 : 계정과목 → 관리항목 → 은행/카드)
+      { path: 'finance/gl', element: <GlPage /> },
+      { path: 'finance/dimensions', element: <DimensionPage /> },
+      { path: 'finance/bank-accounts', element: <BankAccountPage /> },
     ],
   },
 ]);

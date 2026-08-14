@@ -37,6 +37,15 @@ const MENU = [
       { key: '/sales/contracts', label: '계약' },
     ],
   },
+  {
+    key: 'finance',
+    label: 'FINANCE',
+    children: [
+      { key: '/finance/gl', label: '계정과목' },
+      { key: '/finance/dimensions', label: '관리항목' },
+      { key: '/finance/bank-accounts', label: '은행/카드' },
+    ],
+  },
 ];
 
 export function AppLayout() {

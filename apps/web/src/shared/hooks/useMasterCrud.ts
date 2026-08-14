@@ -132,13 +132,19 @@ export function useMasterCrud<TRow extends object>(
         if (error) throw new AxRequestError(toAxError(error));
         return;
       }
+      const pkFilter = opts.pk(draft as TRow);
+      const pkCols = Object.keys(pkFilter).join(',');
       let q = rel(opts.table).update(body as never);
-      for (const [k, v] of Object.entries(opts.pk(draft as TRow))) q = q.eq(k, v);
+      for (const [k, v] of Object.entries(pkFilter)) q = q.eq(k, v);
       // ⚠⚠ RLS 는 UPDATE/DELETE 에서 **조용히 0건**이 된다 — INSERT 처럼 42501 을
       //    던지지 않고 정책이 행을 걸러낼 뿐이다. 그대로 두면 권한 없는 사용자가
       //    "저장했습니다" 를 보고 아무것도 바뀌지 않는다.
       //    `.select()` 로 영향 행을 되받아 0건이면 권한 오류로 처리한다.
-      const { data, error } = await q.select();
+      //
+      // ⚠ 되받을 컬럼을 **PK 로 한정**한다. 인자 없는 `.select()` 는 RETURNING * 가 되어
+      //    SELECT 권한이 회수된 컬럼(예: finance_bank_account.card_number, §19.3)에서
+      //    "permission denied for table" 로 실패한다. 행 수만 세면 되므로 PK 로 충분하다.
+      const { data, error } = await q.select(pkCols);
       if (error) throw new AxRequestError(toAxError(error));
       if (!data || data.length === 0) throw new AxRequestError(PERMISSION_DENIED);
     },
@@ -158,8 +164,8 @@ export function useMasterCrud<TRow extends object>(
       if (opts.deleteVia) return opts.deleteVia(selected);
       let q = rel(opts.table).delete();
       for (const [k, v] of Object.entries(opts.pk(selected))) q = q.eq(k, v);
-      // UPDATE 와 같은 이유로 영향 행을 확인한다(위 주석 참조).
-      const { data, error } = await q.select();
+      // UPDATE 와 같은 이유로 영향 행을 확인한다(위 주석 참조). 컬럼도 PK 로 한정한다.
+      const { data, error } = await q.select(Object.keys(opts.pk(selected)).join(','));
       if (error) throw new AxRequestError(toAxError(error));
       if (!data || data.length === 0) throw new AxRequestError(PERMISSION_DENIED);
     },

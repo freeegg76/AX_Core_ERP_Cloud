@@ -15,12 +15,17 @@ async function login(email) {
   return j.access_token;
 }
 
-async function api(method, path, token, body) {
+/**
+ * ⚠ `return=representation` 은 RETURNING * 를 유발한다. SELECT 권한이 회수된 컬럼이
+ *    있는 테이블(finance_bank_account.card_number)에서는 minimal 로 보내야 한다.
+ */
+async function api(method, path, token, body, minimal = false) {
   const r = await fetch(`${URL_}/rest/v1/${path}`, {
     method,
     headers: {
       apikey: ANON, Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json', Prefer: 'return=representation',
+      'Content-Type': 'application/json',
+      Prefer: minimal ? 'return=minimal' : 'return=representation',
     },
     body: body ? JSON.stringify(body) : undefined,
   });
@@ -175,7 +180,70 @@ console.log('\n═══ 14. SALES 정리 ═══');
 line('계약 삭제', await api('DELETE', 'sales_contract?contract_id=eq.CT900', admin), '1건');
 line('파이프라인 삭제', await api('DELETE', 'sales_pipeline?pipeline_id=eq.PL900', admin), '1건 (활동 CASCADE)');
 
-console.log('\n═══ 15. 정리 ═══');
+console.log('\n═══ 15. FINANCE — 은행/카드 XOR · 마스킹 (§9.10 · §19.3) ═══');
+line('둘 다 비움', await api('POST', 'finance_bank_account', admin,
+  { company_id: 'DEMO', entity_id: 'D1', bank_id: 'BX1', bank_name: '잘못', status: false }, true),
+  'ck_bank_one 기대');
+line('둘 다 입력', await api('POST', 'finance_bank_account', admin,
+  { company_id: 'DEMO', entity_id: 'D1', bank_id: 'BX2', bank_name: '잘못',
+    bank_account: '111', card_number: '222', status: false }, true), 'ck_bank_one 기대');
+line('계좌 중복', await api('POST', 'finance_bank_account', admin,
+  { company_id: 'DEMO', entity_id: 'D1', bank_id: 'BX3', bank_name: '중복',
+    bank_account: '123456-78-901234', status: false }, true), 'ux_bank_account 기대');
+
+const masked = await api('GET', 'v_finance_bank_account?select=bank_id,card_number_masked,is_card&bank_id=eq.C001', admin);
+console.log(`  뷰 마스킹                        ${masked.status}       "${masked.body?.[0]?.card_number_masked}"  is_card=${masked.body?.[0]?.is_card}`);
+const raw = await api('GET', 'finance_bank_account?select=card_number&bank_id=eq.C001', admin);
+console.log(`  원문 직접 조회                     ${raw.status}       ${raw.body?.message ?? ''}  ${raw.status === 403 ? '✔ 차단' : '✗ 노출'}`);
+
+console.log('\n═══ 16. FINANCE — 관리항목 Slot 보존 (§9.8) ═══');
+for (const [id, name] of [['D1','부문'],['D2','프로젝트'],['D3','캠페인'],['D4','채널'],['D5','기타']]) {
+  const r = await rpc('ax_finance_dimension_save', admin, { p_dim: { dimension_id: id, dimension_name: name } });
+  process.stdout.write(`  ${id}→Slot${r.body?.slot_no ?? '?'} `);
+}
+console.log('');
+line('6번째 관리항목', await rpc('ax_finance_dimension_save', admin,
+  { p_dim: { dimension_id: 'D6', dimension_name: '초과' } }), 'AX-50422 기대');
+
+// Slot 보존 — 중간을 지우고 새로 만들면 빈 자리를 채워야 한다(당기지 않는다)
+// ⚠ 표준 GL 355건이 dimension3 플래그를 쓰고 있어 삭제가 막힌다 — 정상 동작이다(§9.8).
+line('사용 중인 D3 삭제', await rpc('ax_finance_dimension_delete', admin,
+  { p_dimension_id: 'D3' }), 'AX-50424 기대');
+// 플래그를 내린 뒤에는 삭제된다
+await api('PATCH', 'finance_gl?dimension3=eq.true', admin, { dimension3: false }, true);
+line('플래그 해제 후 D3 삭제', await rpc('ax_finance_dimension_delete', admin,
+  { p_dimension_id: 'D3' }), '204');
+const refill = await rpc('ax_finance_dimension_save', admin,
+  { p_dim: { dimension_id: 'D7', dimension_name: '재사용' } });
+console.log(`  빈 Slot 재사용                    ${refill.status}       Slot=${refill.body?.slot_no}  ${refill.body?.slot_no === 3 ? '✔ 3번을 채움(당기지 않음)' : '✗'}`);
+
+console.log('\n═══ 17. FINANCE — 상세값은 개별 삭제할 수 없다 (§9.8) ═══');
+await api('POST', 'finance_dimension_detail', admin,
+  { company_id: 'DEMO', entity_id: 'D1', dimension_id: 'D1', line_no: 0, dimension_value: '영업' });
+const dup = await api('POST', 'finance_dimension_detail', admin,
+  { company_id: 'DEMO', entity_id: 'D1', dimension_id: 'D1', line_no: 0, dimension_value: '영업' });
+line('같은 값 중복', dup, 'ux_dim_value 기대');
+line('상세값 DELETE 시도', await api('DELETE', 'finance_dimension_detail?dimension_id=eq.D1', admin),
+  '정책 없음 → 0건');
+
+console.log('\n═══ 18. FINANCE — 계정과목 contra_gl (§7.4) ═══');
+line('차감항목 아닌데 contra', await api('POST', 'finance_gl', admin,
+  { company_id: 'DEMO', entity_id: 'D1', gl_id: 'GX1', gl_name: '잘못', gl_type: '0',
+    gl_detail: '0', contra_gl: '1010000', status: true }), 'ck_gl_contra_shape 기대');
+line('자기 자신 지정', await api('POST', 'finance_gl', admin,
+  { company_id: 'DEMO', entity_id: 'D1', gl_id: 'GX2', gl_name: '잘못', gl_type: '0',
+    gl_detail: '1', contra_gl: 'GX2', status: true }), 'ck_gl_contra_self 기대');
+line('없는 계정 지정', await api('POST', 'finance_gl', admin,
+  { company_id: 'DEMO', entity_id: 'D1', gl_id: 'GX3', gl_name: '잘못', gl_type: '0',
+    gl_detail: '1', contra_gl: 'NOPE', status: true }), 'AX-50404 기대');
+
+console.log('\n═══ 19. FINANCE 정리 ═══');
+for (const id of ['D1','D2','D4','D5','D7']) {
+  await rpc('ax_finance_dimension_delete', admin, { p_dimension_id: id });
+}
+console.log('  관리항목 정리 완료');
+
+console.log('\n═══ 20. 정리 ═══');
 line('부서 T2 삭제', await api('DELETE', 'system_team?team_id=eq.T2', admin), '204');
 line('Pod P2 삭제', await api('DELETE', 'system_pod?pod_id=eq.P2', admin), '204');
 line('기수 Y2028 삭제', await api('DELETE', 'system_year?company_year_id=eq.Y2028', admin), '204');
