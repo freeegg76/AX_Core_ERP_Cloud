@@ -10,7 +10,7 @@
     "db:test": "supabase test db",
     "db:lint": "supabase db lint --level warning",
     "db:types": "supabase gen types typescript --local > apps/web/src/lib/database.types.ts",
-    "db:security": "node scripts/check-security.mjs",
+    "db:security": "docker exec -i supabase_db_ax-bridge-cloud psql -U postgres -d postgres -v ON_ERROR_STOP=1 < scripts/check-security.sql",
     "check:secrets": "node scripts/check-no-service-role.mjs",
     "check:drift": "node scripts/check-schema-drift.mjs",
     "check:production": "node scripts/verify-production.mjs",

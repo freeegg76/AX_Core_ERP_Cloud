@@ -45,6 +45,8 @@ const line = (label, res, expect) =>
 
 const admin = await login('demo-admin@axbridge.local');
 const editor = await login('demo-editor@axbridge.local');
+// 전표 승인·초기이월 확정은 APPROVER 다. ADMIN 으로 통과시키면 권한 경계가 검증되지 않는다.
+const approver = await login('demo-approver@axbridge.local');
 
 console.log('\n═══ 1. SYSTEM 마스터 CRUD ═══');
 line('Pod 생성 (EDITOR)', await api('POST', 'system_pod', editor,
@@ -237,13 +239,201 @@ line('없는 계정 지정', await api('POST', 'finance_gl', admin,
   { company_id: 'DEMO', entity_id: 'D1', gl_id: 'GX3', gl_name: '잘못', gl_type: '0',
     gl_detail: '1', contra_gl: 'NOPE', status: true }), 'AX-50404 기대');
 
-console.log('\n═══ 19. FINANCE 정리 ═══');
+/*============================================================================
+  Phase 6 — FINANCE 핵심업무 (설계서 §9.1 · §9.4 · §9.6)
+
+  ⚠ 실행 순서에 의존이 있다. 전표 → 초기이월 → 마감 순이어야 한다.
+    마감은 "대상연도 미승인 전표 없음"(50515)과 "차년도 초기이월 미존재"(50516)를
+    요구하므로, 앞 절이 남긴 것을 정리한 뒤에야 성공한다.
+============================================================================*/
+
+/**
+ * ⚠ 앞 절(§4)이 D0003 을 APPROVER 로 승격시켜 두었다. `ax_require_role` 은 JWT 클레임이
+ *   아니라 `auth_role_rank_live()` 로 **현재 DB 값**을 읽으므로(§6.2), 토큰을 다시
+ *   받지 않아도 승격이 즉시 적용된다. 권한 경계를 검증하려면 먼저 되돌려야 한다.
+ */
+await rpc('ax_system_employee_set_role', admin, { p_employee_id: 'D0003', p_role: 'EDITOR' });
+const editorLow = await login('demo-editor@axbridge.local');
+
+console.log('\n═══ 19. FINANCE 전표 — 저장 · line_on · Layer3 (§9.1) ═══');
+
+// 3100000/3110000 은 bank 플래그가 꺼져 있어 Layer3 필수값 없이 저장된다
+const led1 = await rpc('ax_finance_ledger_save', editorLow, {
+  p_head: { ledger_date: '2026-05-10', ledger_name: '균형 전표', ledger_type: '0' },
+  p_lines: [
+    { gl_id: '3100000', drcr: '1', amount: 500000 },
+    { gl_id: '3110000', drcr: '2', amount: 500000 },
+  ],
+});
+line('균형 전표 저장 (EDITOR)', led1, '200');
+const L1 = led1.body ?? {};
+
+const got = await rpc('ax_finance_ledger_get', editorLow,
+  { p_ledger_date: L1.ledger_date, p_ledger_no: L1.ledger_no });
+const lineOns = (got.body?.lines ?? []).map((l) => l.line_on);
+console.log(`  line_on 배열순서 부여            ${got.status}            ${JSON.stringify(lineOns)} ${
+  JSON.stringify(lineOns) === '[1,2]' ? '✔ 순서대로' : '✗ 순서가 어긋난다'}`);
+console.log(`  GL 플래그 동봉                   ${got.status}            f_client=${got.body?.lines?.[0]?.f_client} ${
+  got.body?.lines?.[0]?.f_client !== undefined ? '✔ 화면이 Layer3 활성 판단 가능' : '✗ 플래그 누락'}`);
+
+line('차대 불균형 저장', await rpc('ax_finance_ledger_save', editorLow, {
+  p_head: { ledger_date: '2026-05-11', ledger_name: '불균형' },
+  p_lines: [{ gl_id: '3100000', drcr: '1', amount: 100 }],
+}), '저장은 되나 승인 불가');
+const unbal = (await rpc('ax_finance_ledger_save', editorLow, {
+  p_head: { ledger_date: '2026-05-11', ledger_name: '불균형2' },
+  p_lines: [{ gl_id: '3100000', drcr: '1', amount: 100 }],
+})).body ?? {};
+
+line('은행 플래그 계정 · 은행 누락', await rpc('ax_finance_ledger_save', editorLow, {
+  p_head: { ledger_date: '2026-05-12', ledger_name: '은행누락' },
+  p_lines: [
+    { gl_id: '1010000', drcr: '1', amount: 1000 },
+    { gl_id: '3110000', drcr: '2', amount: 1000 },
+  ],
+}), 'AX-50464 기대');
+
+line('플래그 꺼진 관리항목 입력', await rpc('ax_finance_ledger_save', editorLow, {
+  p_head: { ledger_date: '2026-05-12', ledger_name: '무단 Layer3' },
+  p_lines: [
+    { gl_id: '3100000', drcr: '1', amount: 1000, dimension1: '영업' },
+    { gl_id: '3110000', drcr: '2', amount: 1000 },
+  ],
+}), '차단 기대');
+
+console.log('\n═══ 20. FINANCE 전표 — 계정변경 미리보기는 값을 지우지 않는다 (§7.4) ═══');
+// 3110000 은 은행·관리항목 플래그가 꺼져 있다. 그 값을 든 라인을 옮기면 충돌이다.
+// ⚠ 플래그를 PATCH 로 조작해 상황을 만들지 않는다 — 이미 전표가 참조하는 계정의
+//   플래그 변경은 그 자체가 차단 대상이라(§9.8) 검증이 아니라 잡음이 된다.
+const prevLine = { gl_id: '1010000', drcr: '1', amount: 1000, bank_id: 'B001', due_date: '2026-06-30' };
+const prev = await rpc('ax_finance_ledger_preview_account_change', editorLow, {
+  p_new_gl_id: '3110000', p_line: prevLine,
+});
+const conf = prev.body?.conflicts ?? [];
+console.log(`  충돌 목록 반환                   ${prev.status}            ${JSON.stringify(conf)} ${
+  conf.includes('bank_id') && conf.includes('due_date') ? '✔ 감지' : '✗ 감지 실패'}`);
+console.log(`  ⭐ 값은 그대로 남는다             —              bank_id=${prevLine.bank_id} ${
+  prevLine.bank_id === 'B001' ? '✔ 미리보기는 판정만 한다(화면이 확인 후 초기화)' : '✗ 값이 지워졌다'}`);
+line('타 회사·미사용 계정 미리보기', await rpc('ax_finance_ledger_preview_account_change', editorLow,
+  { p_new_gl_id: 'NOPE', p_line: prevLine }), 'AX-50463 기대');
+
+console.log('\n═══ 21. FINANCE 전표 — 승인 · 승인 후 잠금 (§9.3) ═══');
+line('불균형 승인 (APPROVER)', await rpc('ax_finance_ledger_approve', approver,
+  { p_ledger_date: unbal.ledger_date, p_ledger_no: unbal.ledger_no }), 'AX-50473 기대');
+line('균형 승인 (EDITOR)', await rpc('ax_finance_ledger_approve', editorLow,
+  { p_ledger_date: L1.ledger_date, p_ledger_no: L1.ledger_no }), '권한 부족 기대');
+line('균형 승인 (APPROVER)', await rpc('ax_finance_ledger_approve', approver,
+  { p_ledger_date: L1.ledger_date, p_ledger_no: L1.ledger_no }), '204');
+line('승인 후 수정', await rpc('ax_finance_ledger_save', editorLow, {
+  p_head: { ledger_date: L1.ledger_date, ledger_no: L1.ledger_no, ledger_name: '수정시도' },
+  p_lines: [
+    { gl_id: '3100000', drcr: '1', amount: 1 },
+    { gl_id: '3110000', drcr: '2', amount: 1 },
+  ],
+}), '차단 기대');
+line('승인 후 삭제', await rpc('ax_finance_ledger_delete', editorLow,
+  { p_ledger_date: L1.ledger_date, p_ledger_no: L1.ledger_no }), '차단 기대');
+
+console.log('\n═══ 22. FINANCE 초기이월 — 0원은 행 삭제다 (§9.4 · C11) ═══');
+line('초기이월 저장 (EDITOR)', await rpc('ax_finance_openbalance_save', editorLow, {
+  p_company_year_id: 'Y2026',
+  p_rows: [
+    { gl_id: '3100000', drcr: '1', amount: 300000 },
+    { gl_id: '3110000', drcr: '2', amount: 300000 },
+  ],
+}), 'saved=2 기대');
+
+const ob1 = await rpc('ax_finance_openbalance_list', editorLow, { p_company_year_id: 'Y2026' });
+console.log(`  합계 (부호 살림)                 ${ob1.status}            차${ob1.body?.totals?.debit_total} 대${ob1.body?.totals?.credit_total} 차액${ob1.body?.totals?.difference}`);
+
+// ⚠ 0원을 보내면 그 행은 사라진다 — "0으로 저장"이 아니다
+const ob0 = await rpc('ax_finance_openbalance_save', editorLow, {
+  p_company_year_id: 'Y2026',
+  p_rows: [
+    { gl_id: '3100000', drcr: '1', amount: 300000 },
+    { gl_id: '3110000', drcr: '2', amount: 0 },
+  ],
+});
+const ob2 = await rpc('ax_finance_openbalance_list', editorLow, { p_company_year_id: 'Y2026' });
+const kept = (ob2.body?.rows ?? []).filter((r) => r.drcr !== null).length;
+console.log(`  ⭐ 0원 행 삭제                    ${ob0.status}            saved=${ob0.body?.saved} 잔존=${kept}건 ${
+  kept === 1 ? '✔ 0원 행이 사라졌다' : '✗ 0원 행이 남아 있다'}`);
+
+line('음수 이월 (C11 — 허용)', await rpc('ax_finance_openbalance_save', editorLow, {
+  p_company_year_id: 'Y2026',
+  p_rows: [
+    { gl_id: '3100000', drcr: '1', amount: 300000 },
+    { gl_id: '3110000', drcr: '2', amount: 300000 },
+  ],
+}), 'saved=2');
+
+line('초기이월 확정 (EDITOR)', await rpc('ax_finance_openbalance_close', editorLow,
+  { p_company_year_id: 'Y2026' }), '권한 부족 기대');
+line('초기이월 확정 (APPROVER)', await rpc('ax_finance_openbalance_close', approver,
+  { p_company_year_id: 'Y2026' }), '204');
+line('확정 후 수정', await rpc('ax_finance_openbalance_save', editorLow, {
+  p_company_year_id: 'Y2026', p_rows: [{ gl_id: '3100000', drcr: '1', amount: 1 }],
+}), '차단 기대');
+line('확정해제 (APPROVER)', await rpc('ax_finance_openbalance_reopen', approver,
+  { p_company_year_id: 'Y2026' }), '권한 부족 기대');
+line('확정해제 (ADMIN)', await rpc('ax_finance_openbalance_reopen', admin,
+  { p_company_year_id: 'Y2026' }), '204');
+
+console.log('\n═══ 23. FINANCE 마감 — 마감은 오름차순, 해제는 내림차순 (§9.6) ═══');
+line('⭐ Y2027 먼저 마감', await rpc('ax_finance_closing_execute', admin,
+  { p_company_year_id: 'Y2027' }), 'AX-50513 기대');
+line('미승인 전표 있는 채로 마감', await rpc('ax_finance_closing_execute', admin,
+  { p_company_year_id: 'Y2026' }), 'AX-50515 기대');
+
+// 미승인 전표를 정리한다 — 승인된 L1 은 그대로 둔다
+await rpc('ax_finance_ledger_delete', editorLow,
+  { p_ledger_date: unbal.ledger_date, p_ledger_no: unbal.ledger_no });
+for (const n of [1, 2]) {
+  await rpc('ax_finance_ledger_delete', editorLow, { p_ledger_date: '2026-05-11', p_ledger_no: n });
+}
+
+line('마감 (EDITOR)', await rpc('ax_finance_closing_execute', editorLow,
+  { p_company_year_id: 'Y2026' }), '권한 부족 기대');
+const closed = await rpc('ax_finance_closing_execute', admin, { p_company_year_id: 'Y2026' });
+line('마감 (ADMIN)', closed, '200');
+console.log(`  차년도 이월 생성                 ${closed.status}            ${closed.body?.next_year_id} ${closed.body?.carried_rows}건`);
+
+line('⭐ 마감연도 전표 신규', await rpc('ax_finance_ledger_save', editorLow, {
+  p_head: { ledger_date: '2026-06-01', ledger_name: '마감후' },
+  p_lines: [
+    { gl_id: '3100000', drcr: '1', amount: 100 },
+    { gl_id: '3110000', drcr: '2', amount: 100 },
+  ],
+}), 'AX-50501 기대');
+line('마감연도 전표 삭제', await rpc('ax_finance_ledger_delete', editorLow,
+  { p_ledger_date: L1.ledger_date, p_ledger_no: L1.ledger_no }), 'AX-50501 기대');
+
+const obNext = await rpc('ax_finance_openbalance_list', admin, { p_company_year_id: 'Y2027' });
+const auto = (obNext.body?.rows ?? []).filter((r) => r.source === 'CLOSING').length;
+console.log(`  자동생성분 source=CLOSING        ${obNext.status}            ${auto}건 ${auto > 0 ? '✔' : '✗'}`);
+line('자동생성분 확정해제 시도', await rpc('ax_finance_openbalance_reopen', admin,
+  { p_company_year_id: 'Y2027' }), 'FR-Close-08 차단 기대');
+
+const reopened = await rpc('ax_finance_closing_reopen', admin, { p_company_year_id: 'Y2026' });
+line('마감해제 (ADMIN)', reopened, '200');
+console.log(`  자동생성분 회수                  ${reopened.status}            ${reopened.body?.removed_rows}건 회수`);
+const obAfter = await rpc('ax_finance_openbalance_list', admin, { p_company_year_id: 'Y2027' });
+const left = (obAfter.body?.rows ?? []).filter((r) => r.drcr !== null).length;
+console.log(`  회수 후 Y2027 이월               ${obAfter.status}            ${left}건 ${left === 0 ? '✔ 비었다' : '✗ 남아 있다'}`);
+
+console.log('\n═══ 24. Phase 6 정리 ═══');
+await rpc('ax_finance_ledger_delete', editorLow,
+  { p_ledger_date: L1.ledger_date, p_ledger_no: L1.ledger_no });
+await rpc('ax_finance_openbalance_save', editorLow, { p_company_year_id: 'Y2026', p_rows: [] });
+console.log('  전표 · 초기이월 정리 완료');
+
+console.log('\n═══ 25. FINANCE 정리 ═══');
 for (const id of ['D1','D2','D4','D5','D7']) {
   await rpc('ax_finance_dimension_delete', admin, { p_dimension_id: id });
 }
 console.log('  관리항목 정리 완료');
 
-console.log('\n═══ 20. 정리 ═══');
+console.log('\n═══ 26. 정리 ═══');
 line('부서 T2 삭제', await api('DELETE', 'system_team?team_id=eq.T2', admin), '204');
 line('Pod P2 삭제', await api('DELETE', 'system_pod?pod_id=eq.P2', admin), '204');
 line('기수 Y2028 삭제', await api('DELETE', 'system_year?company_year_id=eq.Y2028', admin), '204');

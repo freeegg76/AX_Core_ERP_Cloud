@@ -44,6 +44,9 @@ const MENU = [
       { key: '/finance/gl', label: '계정과목' },
       { key: '/finance/dimensions', label: '관리항목' },
       { key: '/finance/bank-accounts', label: '은행/카드' },
+      { key: '/finance/open-balances', label: '초기이월' },
+      { key: '/finance/ledgers', label: '전표' },
+      { key: '/finance/closing', label: '마감관리' },
     ],
   },
 ];

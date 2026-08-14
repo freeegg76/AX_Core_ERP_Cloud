@@ -16,6 +16,9 @@ import { ContractPage } from '@/features/sales/ContractPage';
 import { GlPage } from '@/features/finance/GlPage';
 import { DimensionPage } from '@/features/finance/DimensionPage';
 import { BankAccountPage } from '@/features/finance/BankAccountPage';
+import { OpenBalancePage } from '@/features/finance/OpenBalancePage';
+import { LedgerPage } from '@/features/finance/LedgerPage';
+import { ClosingPage } from '@/features/finance/ClosingPage';
 
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
@@ -46,6 +49,10 @@ export const router = createBrowserRouter([
       { path: 'finance/gl', element: <GlPage /> },
       { path: 'finance/dimensions', element: <DimensionPage /> },
       { path: 'finance/bank-accounts', element: <BankAccountPage /> },
+      // Phase 6 — FINANCE 핵심업무 (설계서 §16 : 초기이월 → 전표 → 마감)
+      { path: 'finance/open-balances', element: <OpenBalancePage /> },
+      { path: 'finance/ledgers', element: <LedgerPage /> },
+      { path: 'finance/closing', element: <ClosingPage /> },
     ],
   },
 ]);

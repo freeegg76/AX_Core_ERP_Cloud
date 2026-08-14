@@ -30,14 +30,17 @@ export function AppToolbar({
   mode, canEdit = true, onSearch, onCreate, onEdit, onSave, onDelete, onCancel, saving, extra,
 }: ToolbarProps) {
   const editing = mode !== 'view';
+  // ⚠ 핸들러가 없는 버튼은 비활성한다. 화면마다 쓰지 않는 동작이 있는데
+  //   (초기이월은 행 단위 제거라 표준 삭제가 없다) 눌러도 아무 일이 없는
+  //   버튼을 살려 두면 사용자가 동작 실패로 읽는다.
   return (
     <Space wrap style={{ marginBottom: 12 }}>
-      <Button onClick={onSearch} disabled={editing}>조회</Button>
-      <Button onClick={onCreate} disabled={editing || !canEdit}>신규</Button>
-      <Button onClick={onEdit} disabled={editing || !canEdit}>수정</Button>
-      <Button type="primary" onClick={onSave} disabled={!editing || !canEdit} loading={saving}>저장</Button>
-      <Button danger onClick={onDelete} disabled={editing || !canEdit}>삭제</Button>
-      <Button onClick={onCancel} disabled={!editing}>취소</Button>
+      <Button onClick={onSearch} disabled={editing || !onSearch}>조회</Button>
+      <Button onClick={onCreate} disabled={editing || !canEdit || !onCreate}>신규</Button>
+      <Button onClick={onEdit} disabled={editing || !canEdit || !onEdit}>수정</Button>
+      <Button type="primary" onClick={onSave} disabled={!editing || !canEdit || !onSave} loading={saving}>저장</Button>
+      <Button danger onClick={onDelete} disabled={editing || !canEdit || !onDelete}>삭제</Button>
+      <Button onClick={onCancel} disabled={!editing || !onCancel}>취소</Button>
       {extra ? <span style={{ borderLeft: '1px solid #eee', paddingLeft: 12 }}>{extra}</span> : null}
     </Space>
   );
