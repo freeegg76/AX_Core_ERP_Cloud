@@ -23,7 +23,11 @@ const MENU = [
   {
     key: 'partner',
     label: 'PARTNER',
-    children: [{ key: '/partner/clients', label: '고객사' }],
+    children: [
+      { key: '/partner/terms', label: '지급정책' },
+      { key: '/partner/clients', label: '고객사' },
+      { key: '/partner/vendors', label: '거래처' },
+    ],
   },
 ];
 

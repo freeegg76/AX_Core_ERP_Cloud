@@ -16,17 +16,17 @@ import {
   StatusBadge, TextField,
 } from '@/shared/ui';
 import { likePattern } from '@/lib/query';
+import { PartnerFields, partnerCommonRow, validateVatId, type PartnerCommon } from './PartnerFields';
 
-interface ClientRow {
+interface ClientRow extends PartnerCommon {
   company_id: string;
   entity_id: string;
   client_id: string;
   client_name: string;
   collecting_type: string | null;
   collecting_term_condition: string | null;
+  client_address: string | null;
   status: boolean;
-  vat_id: string | null;
-  phone_number: string | null;
 }
 
 const searchTerm = makeLookup({
@@ -36,7 +36,7 @@ const searchTerm = makeLookup({
   activeFilter: { col: 'status', value: activeFilterValue('partner_term') },
 });
 
-export function ClientListPage() {
+export function ClientPage() {
   const canEdit = useCan('EDITOR');
   const claims = useClaims();
 
@@ -45,7 +45,9 @@ export function ClientListPage() {
     from: 'v_partner_client',
     select:
       'company_id, entity_id, client_id, client_name, collecting_type, ' +
-      'collecting_term_condition, status, vat_id, phone_number',
+      'collecting_term_condition, status, vat_id, nick_name, rep_name, reg_num, ' +
+      'biz_industry, biz_category, client_address, phone_number, fax_number, ' +
+      'bank_code, bank_branch, bank_account, bank_holder, website, industry, notes',
     table: 'partner_client',
     orderBy: 'client_id',
     pk: (r) => ({ company_id: r.company_id, entity_id: r.entity_id, client_id: r.client_id }),
@@ -65,7 +67,7 @@ export function ClientListPage() {
     validate: (d, mode) => {
       if (mode === 'create' && !d.client_id?.trim()) return '고객사 코드는 필수입니다.';
       if (!d.client_name?.trim()) return '고객사명은 필수입니다.';
-      return null;
+      return validateVatId(d.vat_id);
     },
     toDbRow: (d) => ({
       company_id: d.company_id,
@@ -73,9 +75,9 @@ export function ClientListPage() {
       client_id: d.client_id,
       client_name: d.client_name,
       collecting_type: d.collecting_type ?? null,
-      vat_id: d.vat_id ?? null,
-      phone_number: d.phone_number ?? null,
+      client_address: d.client_address ?? null,
       status: d.status ?? toDbStatus('partner_client', true),
+      ...partnerCommonRow(d),
     }),
   });
 
@@ -154,10 +156,13 @@ export function ClientListPage() {
               />
             </Field>
 
-            <TextField label="사업자번호" value={crud.draft.vat_id}
-              disabled={!crud.editing} onChange={(v) => crud.patch({ vat_id: v })} />
-            <TextField label="전화번호" value={crud.draft.phone_number}
-              disabled={!crud.editing} onChange={(v) => crud.patch({ phone_number: v })} />
+            <PartnerFields<ClientRow>
+              draft={crud.draft}
+              patch={crud.patch}
+              disabled={!crud.editing}
+              address={crud.draft.client_address}
+              onAddressChange={(v) => crud.patch({ client_address: v })}
+            />
             <ActiveField
               active={isActive('partner_client', crud.draft.status)}
               disabled={!crud.editing}

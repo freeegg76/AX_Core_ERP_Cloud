@@ -80,7 +80,54 @@ console.log('\n═══ 6. 직원 삭제 RPC — 참조검사 (§10.2 RPC 19) �
 line('부서 오너인 직원 삭제', await rpc('ax_system_employee_delete', admin,
   { p_employee_id: 'D0001' }), 'AX-50142 기대');
 
-console.log('\n═══ 7. 정리 ═══');
+console.log('\n═══ 7. PARTNER — 지급정책 제약 (CK_term_shape) ═══');
+line('EOM 인데 지정일 입력', await api('POST', 'partner_term', admin,
+  { company_id: 'DEMO', entity_id: 'D1', term_id: 'BAD1', base_rule: 'EOM', fixed_day: 10, offset_days: 0 }),
+  'AX-50203 기대');
+line('CURM 인데 가산일수 입력', await api('POST', 'partner_term', admin,
+  { company_id: 'DEMO', entity_id: 'D1', term_id: 'BAD2', base_rule: 'CURM', fixed_day: 10, offset_days: 5 }),
+  'AX-50203 기대');
+line('CURM 지정일 32', await api('POST', 'partner_term', admin,
+  { company_id: 'DEMO', entity_id: 'D1', term_id: 'BAD3', base_rule: 'CURM', fixed_day: 32, offset_days: 0 }),
+  'AX-50203 기대');
+
+console.log('\n═══ 8. term_condition 은 트리거가 자동 구성한다 (§9.11) ═══');
+const made = await api('POST', 'partner_term', admin,
+  { company_id: 'DEMO', entity_id: 'D1', term_id: 'EOM30', base_rule: 'EOM', offset_days: 30,
+    term_condition: '사용자가-넣은-값' });
+console.log(`  정책식 자동 구성                  ${made.status}   실제="${made.body?.[0]?.term_condition}"  (EOM+30 기대 — 사용자 입력은 무시된다)`);
+
+console.log('\n═══ 9. 지급일 계산 — 월말 보정·윤년 (§9.11) ═══');
+const due = async (term, base) =>
+  (await rpc('ax_partner_term_calc_due', admin, { p_term_id: term, p_base_date: base })).body;
+
+await api('POST', 'partner_term', admin,
+  { company_id: 'DEMO', entity_id: 'D1', term_id: 'CURM31', base_rule: 'CURM', fixed_day: 31, offset_days: 0 });
+
+for (const [t, base, expect, desc] of [
+  ['EOM15',  '2026-03-10', '2026-04-15', 'EOM+15  3월말(31)+15'],
+  // ⚠ EOM 은 클램프하지 않는다 — 월말에 N일을 더한 순수 날짜연산이다.
+  //   원본 T-SQL 도 DATEADD(DAY, @offset, EOMONTH(@base)) 였다.
+  //   1/31 + 30 = 3/2 이며, 2월말로 잘리지 않는다.
+  ['EOM30',  '2026-01-05', '2026-03-02', 'EOM+30  1월말(31)+30 → 클램프 없음'],
+  ['CURM25', '2026-02-10', '2026-02-25', 'CurM25  당월 25일'],
+  ['CURM31', '2026-02-10', '2026-02-28', 'CurM31  평년 2월 → 28 클램프'],
+  ['CURM31', '2028-02-10', '2028-02-29', 'CurM31  윤년 2월 → 29 클램프'],
+]) {
+  const got = await due(t, base);
+  console.log(`  ${desc.padEnd(30)} ${String(got).padEnd(13)} ${got === expect ? '✔' : `✗ ${expect} 기대`}`);
+}
+
+console.log('\n═══ 10. 거래처 · 참조 무결성 (§9.9) ═══');
+line('거래처 생성', await api('POST', 'partner_vendor', admin,
+  { company_id: 'DEMO', entity_id: 'D1', vendor_id: 'VD900', vendor_name: '검증거래처',
+    payment_type: 'EOM30', status: true }), '201');
+line('참조 중인 정책 삭제', await api('DELETE', 'partner_term?term_id=eq.EOM30', admin), '23503 기대');
+line('거래처 삭제', await api('DELETE', 'partner_vendor?vendor_id=eq.VD900', admin), '1건');
+line('정책 삭제 (참조 해제 후)', await api('DELETE', 'partner_term?term_id=eq.EOM30', admin), '1건');
+line('CURM31 정리', await api('DELETE', 'partner_term?term_id=eq.CURM31', admin), '1건');
+
+console.log('\n═══ 11. 정리 ═══');
 line('부서 T2 삭제', await api('DELETE', 'system_team?team_id=eq.T2', admin), '204');
 line('Pod P2 삭제', await api('DELETE', 'system_pod?pod_id=eq.P2', admin), '204');
 line('기수 Y2028 삭제', await api('DELETE', 'system_year?company_year_id=eq.Y2028', admin), '204');

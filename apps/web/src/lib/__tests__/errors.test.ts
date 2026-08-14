@@ -45,6 +45,25 @@ describe('오류 어댑터 (부록 B.3)', () => {
     expect(e.message).toContain('정확히 하나만');
   });
 
+  it('② CHECK 위반 — 지급정책 EOM/CURM 상호배타 (CK_term_shape)', () => {
+    const e = toAxError({
+      code: '23514',
+      message: 'new row for relation "partner_term" violates check constraint "ck_term_shape"',
+    });
+    expect(e.code).toBe('AX-50203');
+    expect(e.message).toContain('월말기준');
+    expect(e.message).not.toMatch(/check constraint|partner_term/);
+  });
+
+  it('② FK 위반 — 사전에 등록된 제약은 구체적 메시지로 바뀐다', () => {
+    const e = toAxError({
+      code: '23503',
+      message: 'update or delete on table "partner_term" violates foreign key constraint "fk_vendor_term" on table "partner_vendor"',
+    });
+    expect(e.code).toBe('AX-50222');
+    expect(e.message).toBe('존재하지 않는 지급정책입니다.');
+  });
+
   it('② FK 위반 — 사전에 없으면 "참조 중이라 삭제 불가" 로 떨어진다 (§9.9)', () => {
     const e = toAxError({
       code: '23503',

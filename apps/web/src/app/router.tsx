@@ -8,7 +8,9 @@ import { PodPage } from '@/features/system/PodPage';
 import { TeamPage } from '@/features/system/TeamPage';
 import { EmployeePage } from '@/features/system/EmployeePage';
 import { YearPage } from '@/features/system/YearPage';
-import { ClientListPage } from '@/features/partner/ClientListPage';
+import { TermPage } from '@/features/partner/TermPage';
+import { ClientPage } from '@/features/partner/ClientPage';
+import { VendorPage } from '@/features/partner/VendorPage';
 
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
@@ -28,8 +30,10 @@ export const router = createBrowserRouter([
       { path: 'system/teams', element: <TeamPage /> },
       { path: 'system/employees', element: <EmployeePage /> },
       { path: 'system/years', element: <YearPage /> },
-      // Phase 3 — PARTNER (진행 중)
-      { path: 'partner/clients', element: <ClientListPage /> },
+      // Phase 3 — PARTNER (설계서 §16 : 지급정책 → 고객사 → 거래처)
+      { path: 'partner/terms', element: <TermPage /> },
+      { path: 'partner/clients', element: <ClientPage /> },
+      { path: 'partner/vendors', element: <VendorPage /> },
     ],
   },
 ]);
