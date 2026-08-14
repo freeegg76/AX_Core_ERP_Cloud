@@ -55,7 +55,15 @@ enable_signup = false
 enable_anonymous_sign_ins = false
 
 [auth.email]
-enable_signup = false
+# ⚠⚠ 이름이 헷갈리는 지점 — 두 `enable_signup` 은 매핑 대상이 다르다.
+#
+#     [auth].enable_signup       → GOTRUE_DISABLE_SIGNUP (반전)  = 자가 가입 차단
+#     [auth.email].enable_signup → GOTRUE_EXTERNAL_EMAIL_ENABLED = **provider 자체 on/off**
+#
+#   여기를 false 로 두면 이메일 로그인이 통째로 막혀 422 email_provider_disabled 가 난다.
+#   자가 가입 차단은 위 [auth].enable_signup = false 가 이미 담당하므로,
+#   여기는 반드시 true 여야 한다(§6.1 — 초대 방식이되 로그인은 되어야 한다).
+enable_signup = true
 enable_confirmations = true
 double_confirm_changes = true
 # 설계서 §6.1 — 비밀번호 정책은 플랫폼이 보장한다.

@@ -4,15 +4,20 @@
   "private": true,
   "description": "AX Bridge — SYSTEM/PARTNER/SALES/FINANCE ERP·CRM (Supabase + GitHub + Vercel)",
   "scripts": {
-    "db:start": "supabase start",
+    "db:start": "supabase start && pnpm db:seed:auth",
     "db:stop": "supabase stop",
-    "db:reset": "supabase db reset",
+    "db:reset": "supabase db reset && pnpm db:seed:auth",
     "db:test": "supabase test db",
     "db:lint": "supabase db lint --level warning",
     "db:types": "supabase gen types typescript --local > apps/web/src/lib/database.types.ts",
     "db:security": "node scripts/check-security.mjs",
     "db:concurrency": "node scripts/concurrency-test.mjs",
-    "verify": "pnpm db:test && pnpm db:security"
+    "verify": "pnpm db:test && pnpm db:security",
+    "db:seed:auth": "node scripts/dev-seed-auth.mjs",
+    "dev": "pnpm --filter @ax-bridge/web dev",
+    "build": "pnpm --filter @ax-bridge/web build",
+    "test": "pnpm --filter @ax-bridge/web test",
+    "typecheck": "pnpm -r typecheck"
   },
   "devDependencies": {
     "supabase": "^2.114.0",

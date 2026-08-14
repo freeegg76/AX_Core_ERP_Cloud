@@ -9,37 +9,18 @@
   로그인 : admin@axbridge.local / axbridge-dev
 ==============================================================================*/
 
--- ⚠ 로컬 전용이므로 auth.users 를 직접 INSERT 한다.
---   운영에서는 절대 이렇게 하지 않는다 — GoTrue 내부 구현에 의존하기 때문이다(§6.5).
-insert into auth.users (
-    id, instance_id, aud, role, email, encrypted_password,
-    email_confirmed_at, created_at, updated_at,
-    raw_app_meta_data, raw_user_meta_data, is_sso_user, is_anonymous)
-values (
-    '00000000-0000-0000-0000-0000000000ad',
-    '00000000-0000-0000-0000-000000000000',
-    'authenticated', 'authenticated',
-    'admin@axbridge.local',
-    extensions.crypt('axbridge-dev', extensions.gen_salt('bf')),
-    now(), now(), now(),
-    '{"provider":"email","providers":["email"]}'::jsonb, '{}'::jsonb, false, false)
-on conflict (id) do nothing;
-
-insert into auth.identities (
-    id, user_id, provider_id, provider, identity_data, created_at, updated_at, last_sign_in_at)
-values (
-    '00000000-0000-0000-0000-0000000000ad',
-    '00000000-0000-0000-0000-0000000000ad',
-    '00000000-0000-0000-0000-0000000000ad',
-    'email',
-    '{"sub":"00000000-0000-0000-0000-0000000000ad","email":"admin@axbridge.local","email_verified":true}'::jsonb,
-    now(), now(), now())
-on conflict (provider_id, provider) do nothing;
-
--- SYSTEM 조직은 마이그레이션 14 가 이미 만들었다. 여기서는 ADMIN 직원만 연결한다.
-select public.ax_bootstrap_admin(
-    '00000000-0000-0000-0000-0000000000ad'::uuid,
-    'admin@axbridge.local');
+-- ⚠⚠ auth.users 를 SQL 로 직접 INSERT 하지 않는다 — 로컬에서도 마찬가지다.
+--
+--   설계서 §6.5 가 경고한 그대로다. GoTrue 는 confirmation_token 등 토큰 컬럼을
+--   NOT NULL string 으로 스캔하므로, NULL 로 남은 행은 로그인 시
+--   "converting NULL to string is unsupported" 500 을 낸다. 컬럼을 하나씩 ''
+--   로 채우는 우회는 GoTrue 버전이 바뀔 때마다 다시 깨진다.
+--
+--   로컬 개발 계정은 Admin API 로 만든다:
+--       pnpm db:seed:auth      (scripts/dev-seed-auth.mjs)
+--   `pnpm db:start` / `pnpm db:reset` 이 이어서 자동 실행한다.
+--
+--   이 파일은 **업무 데이터만** 담는다.
 
 /*------------------------------------------------------------------------------
   샘플 회사 — 화면 개발용. 표준 GL 355행을 실제로 적재한 상태를 만든다.

@@ -32,7 +32,17 @@ Supabase
 | RLS 정책 | 78건 | 전 테이블 `force row level security` |
 | 표준 GL seed | 355행 | |
 
-프론트엔드(`apps/web`)는 **미착수**다. 로드맵은 설계서 §16 참조.
+**Phase 1(공통 기반)도 완료**했다.
+
+| 구성요소 | 내용 |
+| --- | --- |
+| `packages/shared-constants` | status 극성(§10.6) · 코드값 사전 · 오류 사전 |
+| `apps/web/src/lib` | supabase · errors 어댑터 · query(Range 페이징·escapeLike) · rpc 20건 래퍼 · session |
+| `apps/web/src/shared/ui` | AppToolbar · HeadDetailLayout · LookupPopup · DirtyFormGuard · ConfirmDialog · StatusBadge · SearchBar |
+| 화면 | 로그인 · 앱 셸 · 고객사(참조 구현) |
+| 테스트 | Vitest 40건 (status 극성 31 · 오류 어댑터 9) |
+
+도메인 화면(Phase 2~6)은 미착수다. 로드맵은 설계서 §16 참조.
 
 ---
 
@@ -50,28 +60,36 @@ Supabase
 
 ```bash
 pnpm install
-pnpm db:start          # Supabase 로컬 스택 (Postgres · PostgREST · GoTrue · Studio)
+pnpm db:start          # Supabase 로컬 스택 + 개발 계정 시드
+cp apps/web/.env.example apps/web/.env
+pnpm dev               # http://localhost:5173
 ```
 
-`supabase/seed.sql` 이 자동 적용되어 바로 로그인할 수 있는 상태가 된다.
+`db:start` 는 마이그레이션 · `seed.sql`(업무 데이터) · `dev-seed-auth.mjs`(로그인 계정)를
+차례로 적용한다. 비밀번호는 모두 `axbridge-dev` 다.
 
-```
-로그인 : admin@axbridge.local / axbridge-dev
-Studio : http://localhost:54323
-REST   : http://localhost:54321/rest/v1
-```
+| 계정 | 스코프 | 역할 |
+| --- | --- | --- |
+| `demo-admin@axbridge.local` | DEMO/D1 | ADMIN ← **업무 데이터는 이 계정으로** |
+| `demo-approver@axbridge.local` | DEMO/D1 | APPROVER |
+| `demo-editor@axbridge.local` | DEMO/D1 | EDITOR |
+| `admin@axbridge.local` | SYSTEM/SYSTEM | SUPER |
 
-> ⚠ ADMIN 은 `SYSTEM/SYSTEM` 소속이라 DEMO 회사 데이터가 보이지 않는다.
-> **1인 1회사 고정**(C3)이 의도대로 작동하는 것이다. DEMO 데이터를 보려면
-> DEMO 직원(`D0001` 등)에 auth 계정을 연결하고 그 계정으로 로그인한다.
+> ⚠ `admin` 으로 로그인하면 고객사·계정과목이 **0건**으로 보인다. 고장이 아니라
+> **1인 1회사 고정**(C3)이 의도대로 작동하는 것이다 — SYSTEM 조직에는 업무 데이터가 없다.
+
+> ⚠ **로컬에서도 `auth.users` 를 SQL 로 직접 INSERT 하지 않는다.** GoTrue 가 토큰 컬럼을
+> NOT NULL string 으로 스캔해 NULL 인 행은 로그인 시 500 이 난다. 설계서 §6.5 가 경고한
+> 그대로이며, 그래서 로컬 계정도 Admin API(`dev-seed-auth.mjs`)를 경유한다.
 
 ### 주요 명령
 
 ```bash
 pnpm db:reset          # 마이그레이션 전량 재적용 + seed — 베이스라인 재현 검증
-pnpm db:security       # 보안 회귀 검사 11항목 (§19.1)
-pnpm verify            # 보안 + 기능 스모크
 pnpm db:types          # database.types.ts 생성 (수기 편집 금지)
+pnpm test              # Vitest 40건
+pnpm typecheck         # 전 패키지 tsc --noEmit
+pnpm build             # 프로덕션 빌드
 ```
 
 ---
@@ -110,7 +128,14 @@ supabase/
 └─ seed.sql             로컬 전용. 운영에는 적용되지 않는다
 scripts/
 ├─ check-security.sql   보안 회귀 (CI 가 실행)
-└─ bootstrap-admin.mjs  초기 관리자 (service_role 을 쓰는 유일한 코드)
+├─ bootstrap-admin.mjs  초기 관리자 (운영)
+└─ dev-seed-auth.mjs    로컬 개발 계정
+apps/web/                React SPA
+├─ src/lib/             supabase · errors · query · rpc · session · database.types
+├─ src/shared/ui/       공통 컴포넌트 7종
+├─ src/features/        도메인 화면
+└─ src/app/             셸 · 라우터 · 가드
+packages/shared-constants/ status 극성 · 코드값 · 오류 사전
 .github/workflows/
 ├─ ci.yml               PR: 재현·보안·기능·드리프트·시크릿·마이그레이션 불변성
 ├─ deploy-db.yml        main: db push → config push → 프론트 승격
@@ -159,6 +184,8 @@ Planning_Docs/          MSSQL 원본 산출물 — 읽기 전용 이식 소스 (
 | `contra_gl` 검증이 BEFORE ROW 라 **표준 GL 재생성이 항상 실패** (355행 중 24행이 자기 테이블 참조) | 동일하게 지연 제약으로 전환 |
 | 표준 GL seed `2070000 감가상각누계액` 의 `contra_gl` 이 **자기 자신**을 가리킴 (원천 xlsx 오타) | `2060000 기계장치` 로 보정 — `20260814001350_seed_gl_fix.sql` |
 | `security_invoker` 뷰와 컬럼 권한 회수의 충돌 — 뷰가 마스킹 대상 컬럼을 읽지 못함 | `SECURITY DEFINER` 함수 경유 + `is_card` 저장 계산열 |
+| `[auth.email].enable_signup=false` 가 **이메일 provider 자체를 끈다** — 자가가입 차단 의도였으나 로그인이 422 로 막혔다. 자가가입은 상위 `[auth].enable_signup` 소관이다 | `config.toml` 주석으로 두 스위치의 차이를 명시 |
+| `service_role` 에 DML 권한이 없어 부트스트랩이 실패 — 플랫폼 기본값에 의존했다 | `20260814001500_grants_service_role.sql` 로 명시 부여 |
 
 ---
 
