@@ -26,7 +26,8 @@ enabled = false
 enabled = true
 port = 54323
 
-[inbucket]
+# 로컬 메일 확인용. CLI 2.x 에서 [inbucket] → [local_smtp] 로 개명되었다.
+[local_smtp]
 enabled = true
 port = 54324
 

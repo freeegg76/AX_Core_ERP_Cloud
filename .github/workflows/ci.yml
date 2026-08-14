@@ -21,6 +21,10 @@ jobs:
         with:
           fetch-depth: 0
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
       - uses: supabase/setup-cli@v1
         with:
           version: 2.114.0
@@ -44,16 +48,12 @@ jobs:
                -v ON_ERROR_STOP=1 -f supabase/tests/smoke.sql
 
       # ── 4. 스키마 드리프트 — 마이그레이션이 실제 스키마와 일치하는가
-      #     출력이 비어야 통과한다. `db diff` 를 생성이 아니라 **단언**으로 쓴다.
+      #     `db diff` 를 생성이 아니라 **단언**으로 쓴다.
+      #
+      # ⚠ 파일 크기로 판단하면 안 된다 — CLI 가 실행 환경에 따라 JSON 메타데이터를
+      #    stdout 에 쓰기도 해서, 차이가 없어도 파일이 비어 있지 않다.
       - name: 스키마 드리프트 검사
-        run: |
-          supabase db diff --local --schema public > /tmp/drift.sql
-          if [ -s /tmp/drift.sql ]; then
-            echo "❌ 마이그레이션에 반영되지 않은 스키마 차이가 있습니다:"
-            cat /tmp/drift.sql
-            exit 1
-          fi
-          echo "✔ 스키마 드리프트 없음"
+        run: node scripts/check-schema-drift.mjs
 
   guards:
     name: 가드 — 시크릿 · 마이그레이션 불변성
@@ -63,15 +63,19 @@ jobs:
         with:
           fetch-depth: 0
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
       # ── §19.2 하드 가드 — service_role 키가 프론트엔드에 들어가면 즉시 실패
       #     anon 키는 공개 정보라 무방하다. service_role 은 BYPASSRLS 이므로 절대 안 된다.
+      #
+      # ⚠ 이전에는 `grep -rniE 'service_role'` 이었고 **양쪽으로 틀렸다** —
+      #    거짓 양성 : "service_role 을 넣지 말라"는 경고 주석에 걸려 CI 가 실패했다.
+      #    거짓 음성 : 진짜 키는 base64 JWT 라서 원문에 그 문자열이 아예 없다.
+      #    지금은 JWT payload 를 디코드해 role 을 확인한다.
       - name: service_role 키 노출 검사
-        run: |
-          if grep -rniE 'service_role' apps packages 2>/dev/null; then
-            echo "❌ 프론트엔드에서 service_role 참조가 발견되었습니다 (§19.2)"
-            exit 1
-          fi
-          echo "✔ service_role 미노출"
+        run: node scripts/check-no-service-role.mjs
 
       # ── §16.1 — 기존 마이그레이션은 수정·삭제할 수 없다.
       #     이미 적용된 환경에 반영되지 않아 환경 간 스키마가 갈라진다.
