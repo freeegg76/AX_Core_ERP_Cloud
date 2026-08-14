@@ -24,8 +24,36 @@ concurrency:
   cancel-in-progress: false      # 마이그레이션 중간 취소는 위험하다
 
 jobs:
+  # ⚠ 운영 Supabase 프로젝트가 아직 없을 수 있다. 시크릿이 등록되기 전까지는
+  #    배포를 **건너뛴다** — 셋업이 끝나지 않았다는 이유로 main 이 빨갛게 보이면
+  #    진짜 실패를 놓치게 된다.
+  preflight:
+    name: 시크릿 확인
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - id: check
+        env:
+          PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+          ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          if [ -n "$PROJECT_ID" ] && [ -n "$ACCESS_TOKEN" ] && [ -n "$DB_PASSWORD" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "✔ 운영 시크릿 확인 — 배포를 진행합니다"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::운영 시크릿이 아직 없어 배포를 건너뜁니다."
+            echo "  README '운영 배포 셋업' 절차에 따라 아래를 등록하세요:"
+            echo "    Settings → Environments → production"
+            echo "      SUPABASE_PROJECT_ID · SUPABASE_ACCESS_TOKEN · SUPABASE_DB_PASSWORD · SUPABASE_DB_HOST"
+          fi
+
   deploy:
     name: production 반영
+    needs: preflight
+    if: needs.preflight.outputs.ready == 'true'
     runs-on: ubuntu-latest
     environment: production      # ← 수동 승인 게이트
     steps:
@@ -69,6 +97,15 @@ jobs:
                -v ON_ERROR_STOP=1 -f scripts/check-security.sql
 
       # ⚠ DB 성공 이후에만 프론트를 승격한다 (배포 스큐 대응, §18.3)
+      #    Vercel 연결 전이라면 훅이 없으므로 건너뛴다 — DB 배포는 이미 끝났다.
       - name: 프론트엔드 승격
         if: success()
-        run: curl -fsS -X POST "${{ secrets.VERCEL_DEPLOY_HOOK }}"
+        env:
+          HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$HOOK" ]; then
+            echo "::notice::VERCEL_DEPLOY_HOOK 이 없어 프론트 승격을 건너뜁니다 (DB 배포는 완료)."
+            exit 0
+          fi
+          curl -fsS -X POST "$HOOK"
+          echo "✔ 프론트엔드 배포를 트리거했습니다"

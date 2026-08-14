@@ -13,6 +13,7 @@
     "db:security": "node scripts/check-security.mjs",
     "check:secrets": "node scripts/check-no-service-role.mjs",
     "check:drift": "node scripts/check-schema-drift.mjs",
+    "check:production": "node scripts/verify-production.mjs",
     "db:concurrency": "node scripts/concurrency-test.mjs",
     "verify": "pnpm check:secrets && pnpm check:drift",
     "db:seed:auth": "node scripts/dev-seed-auth.mjs",

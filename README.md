@@ -199,6 +199,54 @@ Planning_Docs/          MSSQL 원본 산출물 — 읽기 전용 이식 소스 (
 > ① 전진 수정 마이그레이션 ② PITR 뿐이다. 그래서 CI 의 전체 재현 검증이 사실상의
 > 롤백 대비이며, 파괴적 변경은 `production` 환경 수동 승인을 거친다.
 
+### 운영 배포 셋업
+
+운영 Supabase 프로젝트가 없으면 `Deploy DB` 는 **조용히 건너뛴다**(preflight job).
+아래를 마치면 자동으로 동작하기 시작한다.
+
+**1. Supabase 프로젝트 생성** — https://supabase.com/dashboard → New project
+
+| 항목 | 권장 | 이유 |
+| --- | --- | --- |
+| Region | Northeast Asia (Seoul) | 국내 지연시간 |
+| Plan | **Pro** | ⚠ **PITR 이 Free 에 없다.** 롤백이 없는 구조(§16.1)라 PITR 이 사실상 유일한 복구 수단이다(§18.5) |
+| DB Password | 강한 무작위 | 생성 시 한 번만 표시된다 |
+
+**2. 값 수집** — 대시보드에서
+
+| 값 | 위치 |
+| --- | --- |
+| `SUPABASE_PROJECT_ID` | Settings → General → Reference ID |
+| `SUPABASE_DB_HOST` | Settings → Database → Host |
+| `SUPABASE_URL` | Settings → API → Project URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | Settings → API → service_role (secret) |
+| `SUPABASE_ACCESS_TOKEN` | https://supabase.com/dashboard/account/tokens |
+
+**3. GitHub Environment 2개** — Settings → Environments
+
+- `production` : `SUPABASE_PROJECT_ID` · `SUPABASE_ACCESS_TOKEN` · `SUPABASE_DB_PASSWORD` ·
+  `SUPABASE_DB_HOST` · (선택) `VERCEL_DEPLOY_HOOK`
+  Required reviewers 를 지정하면 파괴적 마이그레이션 전에 승인 단계가 생긴다(§18.5).
+- `bootstrap` : `SUPABASE_URL` · `SUPABASE_SERVICE_ROLE_KEY` ·
+  `BOOTSTRAP_ADMIN_EMAIL` · `BOOTSTRAP_ADMIN_PASSWORD`
+
+**4. Vercel** (선택, 나중에 가능) — Import 후 Root Directory `apps/web`,
+환경변수는 `VITE_SUPABASE_URL` · `VITE_SUPABASE_ANON_KEY` 둘뿐이다.
+Deploy Hook 을 만들어 `VERCEL_DEPLOY_HOOK` 에 넣는다. 없으면 프론트 승격만 건너뛴다.
+
+**5. 첫 배포** — `main` push → `Deploy DB` 승인 → Actions 에서 **Bootstrap Admin** 수동 실행
+(`BOOTSTRAP` 입력) → 로그인 후 비밀번호 변경.
+
+**6. 검증** — 배포 성공만으로는 보안 자세를 알 수 없다. Auth Hook 미등록·anon 키 오투입은
+배포가 성공해도 발생한다.
+
+```bash
+SUPABASE_URL=https://<ref>.supabase.co SUPABASE_ANON_KEY=eyJ... ADMIN_EMAIL=... ADMIN_PASSWORD=... node scripts/verify-production.mjs
+```
+
+키 role · 미인증 접근 차단 · 카드번호 원문 차단 · **클레임 주입(Auth Hook)** 을 확인한다.
+⚠ service_role 키로 실행하지 않는다 — BYPASSRLS 라 RLS 작동 여부를 알 수 없다.
+
 ### 시크릿
 
 | 위치 | 값 |
