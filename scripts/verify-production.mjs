@@ -8,7 +8,7 @@
  *
  * 실행 :
  *   SUPABASE_URL=https://<ref>.supabase.co \
- *   SUPABASE_ANON_KEY=eyJ... \
+ *   SUPABASE_ANON_KEY=sb_publishable_... (또는 구형 eyJ...) \
  *   [ADMIN_EMAIL=... ADMIN_PASSWORD=...] \
  *   node scripts/verify-production.mjs
  *
@@ -23,7 +23,7 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 
 if (!URL_ || !ANON) {
   console.error('❌ SUPABASE_URL / SUPABASE_ANON_KEY 가 필요합니다.');
-  console.error('   대시보드 Settings → API 에서 Project URL 과 anon(public) 키를 가져오세요.');
+  console.error('   대시보드 Settings → API 에서 Project URL 과 anon(publishable) 키를 가져오세요.');
   process.exit(1);
 }
 
@@ -37,6 +37,20 @@ function decodeJwt(token) {
   } catch { return null; }
 }
 
+/**
+ * 키 종류 판별 — Supabase 는 키 형식을 두 가지 운용한다(§19.2).
+ *   구형 : JWT. 페이로드의 role 이 anon | service_role
+ *   신형 : 불투명 문자열. sb_publishable_… | sb_secret_…
+ * 신형은 디코드할 수 없으므로 **접두어가 유일한 단서**다. JWT 파싱만 하면
+ * 신형 anon 키를 "role 미상"으로 오판해 정상 셋업을 실패로 보고한다.
+ */
+function classifyKey(key) {
+  if (key.startsWith('sb_publishable_')) return 'anon';
+  if (key.startsWith('sb_secret_')) return 'service_role';
+  const c = decodeJwt(key);
+  return c?.role ?? null;
+}
+
 const rest = (path, token = ANON, extra = {}) =>
   fetch(`${URL_}/rest/v1/${path}`, {
     headers: { apikey: ANON, Authorization: `Bearer ${token}`, ...extra },
@@ -46,34 +60,56 @@ console.log(`\n운영 환경 검증 — ${URL_}\n`);
 
 /*──────────────────────────────────── 1. 키 확인 */
 console.log('1. 키');
-const anonClaims = decodeJwt(ANON);
-if (anonClaims?.role === 'anon') ok('anon 키가 맞다');
-else bad(`키의 role 이 '${anonClaims?.role}' 이다 — anon 키여야 한다 (§19.2)`);
+const role = classifyKey(ANON);
+if (role === 'anon') ok('anon(publishable) 키가 맞다');
+else if (role === 'service_role') {
+  bad('service_role(secret) 키가 들어왔다 — 이 키로는 RLS 검증이 불가능하다 (§19.1)');
+  console.log('    service_role 은 BYPASSRLS 라 무엇이든 통과한다. anon 키로 다시 실행하세요.');
+} else bad(`키 종류를 판별할 수 없다 ('${role}') — anon 키여야 한다 (§19.2)`);
 
-/*──────────────────────────────────── 2. 스키마 적용 여부 */
+/*──────────────────────────────────── 2. 스키마 적용 여부
+ * ⚠ HTTP 상태만 보면 안 된다. "테이블이 없다"(PGRST205/404)와
+ *   "테이블은 있는데 권한이 없다"(42501/401)는 **정반대 결론**인데
+ *   둘 다 성공이 아닌 응답이라 뭉뚱그리면 미배포를 정상으로 읽는다.
+ */
 console.log('\n2. 스키마');
-const seed = await rest('finance_gl_seed?select=gl_id&limit=1');
-if (seed.status === 401 || seed.status === 200) {
-  ok(`PostgREST 응답 (HTTP ${seed.status})`);
+/** rel 에 `?` 가 있으면 질의를 그대로 쓰고, 없으면 기본 질의를 붙인다. */
+async function probe(rel) {
+  const r = await rest(rel.includes('?') ? rel : `${rel}?select=*&limit=1`);
+  let body; try { body = JSON.parse(await r.text()); } catch { body = {}; }
+  return { status: r.status, code: body?.code, message: body?.message, body };
+}
+const seed = await probe('finance_gl_seed');
+if (seed.code === 'PGRST205' || seed.status === 404) {
+  bad('테이블이 존재하지 않는다 — 마이그레이션이 적용되지 않았다 (§18.3)');
+  console.log('    GitHub Actions 의 deploy-db 워크플로가 성공했는지 확인하세요.');
+} else if (seed.code === '42501' || seed.status === 200) {
+  ok(`테이블 해석됨 — 마이그레이션 적용 확인 (${seed.code ?? `HTTP ${seed.status}`})`);
+} else if (seed.message?.includes('API key')) {
+  bad(`키가 거부되었다 — ${seed.message}`);
 } else {
-  bad(`PostgREST 이상 응답 ${seed.status} — 마이그레이션이 적용되지 않았을 수 있다`);
+  bad(`판정 불가: HTTP ${seed.status} ${seed.code ?? ''} ${seed.message ?? ''}`);
 }
 
-/*──────────────────────────────────── 3. 미인증 접근 차단 */
+/*──────────────────────────────────── 3. 미인증 접근 차단
+ * ⚠ 맨 401 을 "RLS 가 막았다"로 읽으면 안 된다. **잘못된 키도 401** 이다.
+ *   키가 틀려서 전부 막히는 상태를 "보안이 잘 되어 있다"로 오독하면,
+ *   정작 키를 고친 뒤에 실제로 새는지를 아무도 확인하지 않게 된다.
+ */
 console.log('\n3. 미인증 접근 (RLS 기본값 = 거부)');
 for (const rel of ['system_employee', 'finance_ledger_head', 'partner_client']) {
-  const r = await rest(`${rel}?select=*&limit=1`);
-  const body = await r.text();
-  if (r.status === 401) ok(`${rel} — 401 (anon 차단)`);
-  else if (r.status === 200 && body.trim() === '[]') ok(`${rel} — 0건 (RLS 필터)`);
-  else bad(`${rel} — HTTP ${r.status}, 응답 ${body.slice(0, 80)} ← 데이터가 새고 있을 수 있다`);
+  const r = await probe(rel);
+  if (r.code === '42501') ok(`${rel} — 42501 (anon 에 GRANT 없음)`);
+  else if (r.status === 200 && Array.isArray(r.body) && r.body.length === 0) ok(`${rel} — 0건 (RLS 필터)`);
+  else if (r.message?.includes('API key')) bad(`${rel} — 키 거부(${r.message}). 차단이 아니라 키 문제다`);
+  else bad(`${rel} — HTTP ${r.status} ${r.code ?? ''} ${JSON.stringify(r.body).slice(0, 80)} ← 데이터가 새고 있을 수 있다`);
 }
 
 /*──────────────────────────────────── 4. 카드번호 원문 차단 */
 console.log('\n4. 카드번호 마스킹 (§19.3)');
-const card = await rest('finance_bank_account?select=card_number&limit=1');
-if (card.status === 401 || card.status === 403) ok(`원문 컬럼 접근 차단 (HTTP ${card.status})`);
-else if (card.status === 200 && (await card.clone().text()).trim() === '[]') {
+const card = await probe('finance_bank_account?select=card_number&limit=1');
+if (card.code === '42501' || card.status === 403) ok(`원문 컬럼 접근 차단 (${card.code ?? card.status})`);
+else if (card.status === 200 && Array.isArray(card.body) && card.body.length === 0) {
   ok('0건 — RLS 로 걸러짐 (인증 후 재확인 권장)');
 } else bad(`card_number 가 조회된다 (HTTP ${card.status}) — 컬럼 GRANT 를 확인하라`);
 
@@ -109,9 +145,12 @@ if (!ADMIN_EMAIL || !ADMIN_PASSWORD) {
     }
 
     // 인증 상태에서 다시 한 번: 카드 원문은 여전히 막혀야 한다
+    // ⚠ PostgREST 는 같은 42501 을 미인증이면 401, 인증이면 403 으로 매핑한다.
+    //   상태코드만 비교하면 인증 후 검사가 조용히 빗나간다 — code 로 판정한다.
     const card2 = await rest('finance_bank_account?select=card_number&limit=1', j.access_token);
-    if (card2.status === 403) ok('인증 후에도 card_number 원문 차단');
-    else if (card2.status === 200 && (await card2.text()).trim() === '[]') ok('은행/카드 데이터 없음 — 등록 후 재확인');
+    let c2; try { c2 = JSON.parse(await card2.text()); } catch { c2 = {}; }
+    if (c2?.code === '42501') ok('인증 후에도 card_number 원문 차단 (42501)');
+    else if (card2.status === 200 && Array.isArray(c2) && c2.length === 0) ok('은행/카드 데이터 없음 — 등록 후 재확인');
     else bad(`인증 후 card_number 가 조회된다 (HTTP ${card2.status}) — §19.3 위반`);
 
     // 뷰는 마스킹된 값을 준다

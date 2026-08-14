@@ -26,8 +26,16 @@ const TEXT_EXT = new Set([
   '.env', '.example', '.yml', '.yaml', '.toml', '.md', '.txt', '',
 ]);
 
-/** JWT 세 조각. 실제 키는 이 형태로만 존재한다. */
+/** 구형 키 — JWT 세 조각. payload 의 role 로 판별한다. */
 const JWT_RE = /eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g;
+
+/**
+ * 신형 키 — 불투명 문자열. `sb_secret_…` 가 service_role 에 해당한다.
+ * ⚠ 디코드할 수 없으므로 **접두어가 유일한 단서**다. JWT 만 검사하면 신형 비밀키가
+ *   번들에 그대로 실려도 통과한다 — 형식이 바뀌었을 뿐 위험은 동일하다(§19.2).
+ * ⚠ 접두어 문자열을 설명하는 주석·문서는 막지 않는다. 실제 키는 뒤에 본문이 붙는다.
+ */
+const SECRET_KEY_RE = /\bsb_secret_[A-Za-z0-9_-]{12,}/g;
 
 /** 키를 주입할 수 있는 환경변수 이름. 프론트엔드에서 참조 자체가 금지다. */
 const ENV_RE = /\b(SUPABASE_)?SERVICE_ROLE(_KEY)?\b/;
@@ -61,7 +69,12 @@ function scanFile(path) {
     }
   }
 
-  // ② 환경변수 참조 — 주석은 제외한다(설명은 위험이 아니다)
+  // ② 신형 비밀키 — 접두어로만 판별할 수 있다
+  for (const key of text.match(SECRET_KEY_RE) ?? []) {
+    failures.push(`${path}: 신형 secret 키가 포함되어 있습니다 (${key.slice(0, 18)}…)`);
+  }
+
+  // ③ 환경변수 참조 — 주석은 제외한다(설명은 위험이 아니다)
   text.split('\n').forEach((line, i) => {
     const stripped = line.replace(/^\s*(\/\/|#|\*|--).*$/, '');
     if (ENV_RE.test(stripped)) {
