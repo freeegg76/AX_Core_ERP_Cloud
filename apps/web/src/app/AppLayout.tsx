@@ -3,9 +3,28 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useSession } from '@/lib/session';
 import { ROLE_LABEL } from '@ax-bridge/shared-constants';
 
-/** 설계서 §4.3 features 구조에 맞춘 메뉴. Phase 2~6 에서 항목이 채워진다. */
+/**
+ * 메뉴 — 설계서 §16 로드맵 순서를 그대로 따른다.
+ * 의존성상 SYSTEM(조직·기수)이 선행되어야 PARTNER/SALES/FINANCE 가 성립한다.
+ */
 const MENU = [
-  { key: '/partner/clients', label: '고객사' },
+  {
+    key: 'system',
+    label: 'SYSTEM',
+    children: [
+      { key: '/system/companies', label: '그룹' },
+      { key: '/system/entities', label: '회사' },
+      { key: '/system/pods', label: 'Pod' },
+      { key: '/system/teams', label: '부서' },
+      { key: '/system/employees', label: '직원' },
+      { key: '/system/years', label: '회사 기수' },
+    ],
+  },
+  {
+    key: 'partner',
+    label: 'PARTNER',
+    children: [{ key: '/partner/clients', label: '고객사' }],
+  },
 ];
 
 export function AppLayout() {

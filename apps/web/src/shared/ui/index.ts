@@ -5,3 +5,4 @@ export * from './DirtyFormGuard';
 export * from './ConfirmDialog';
 export * from './StatusBadge';
 export * from './SearchBar';
+export * from './Field';

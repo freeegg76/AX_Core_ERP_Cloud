@@ -39,10 +39,16 @@ Supabase
 | `packages/shared-constants` | status 극성(§10.6) · 코드값 사전 · 오류 사전 |
 | `apps/web/src/lib` | supabase · errors 어댑터 · query(Range 페이징·escapeLike) · rpc 20건 래퍼 · session |
 | `apps/web/src/shared/ui` | AppToolbar · HeadDetailLayout · LookupPopup · DirtyFormGuard · ConfirmDialog · StatusBadge · SearchBar |
-| 화면 | 로그인 · 앱 셸 · 고객사(참조 구현) |
+| `apps/web/src/shared/hooks` | useMasterCrud(Head/Detail 공통 흐름) · useLookup |
 | 테스트 | Vitest 40건 (status 극성 31 · 오류 어댑터 9) |
 
-도메인 화면(Phase 2~6)은 미착수다. 로드맵은 설계서 §16 참조.
+**Phase 2(SYSTEM) 완료** — 그룹 · 회사 · Pod · 부서 · 직원 · 회사 기수 6화면.
+
+마스터 화면은 `useMasterCrud` 한 곳에 흐름을 모았다(§12.1 중복 구현 금지). 화면이
+정하는 것은 ① 어디서 읽는가 ② 어떤 컬럼인가 ③ PK 를 어떻게 만드는가 뿐이다.
+직원 화면만 예외적으로 2탭 구조 + 역할변경/삭제 RPC 를 갖는다(§12.5).
+
+PARTNER(진행 중) · SALES · FINANCE 는 미착수다. 로드맵은 설계서 §16 참조.
 
 ---
 
@@ -107,6 +113,15 @@ RLS 적용 · FORCE RLS · 필수 정책 완비 · anon 실행함수 0 · `searc
 > 5번(`security_invoker`)이 v2.0 최대의 사고 경로다. PostgreSQL 뷰의 기본값은 `off` 이고,
 > 그 경우 뷰가 소유자 권한으로 실행되어 **RLS 를 통째로 우회**한다.
 
+**화면 계약** — `scripts/verify-screens.mjs` (실제 HTTP)
+
+마스터 CRUD · 권한 상향(§6.4) · 부서 순환의존 · 역할변경 RPC 3종 거부 ·
+컬럼 GRANT · 삭제 참조검사.
+
+> ⚠ **RLS 는 UPDATE/DELETE 에서 조용히 0건이 된다.** INSERT 처럼 42501 을 던지지 않고
+> 정책이 행을 걸러낼 뿐이라, 상태코드만 보면 성공처럼 보인다. 그래서 검증은 영향 행 수를
+> 함께 확인하고, `useMasterCrud` 도 0건이면 권한 오류로 처리한다.
+
 **기능 스모크** — `supabase/tests/smoke.sql`
 
 ① 채번(일자별 리셋) ② 테넌트 격리 + `WITH CHECK` ③ 컬럼 GRANT ④ RPC 역할검사
@@ -128,6 +143,7 @@ supabase/
 └─ seed.sql             로컬 전용. 운영에는 적용되지 않는다
 scripts/
 ├─ check-security.sql   보안 회귀 (CI 가 실행)
+├─ verify-screens.mjs   화면 계약 검증 (실제 HTTP)
 ├─ bootstrap-admin.mjs  초기 관리자 (운영)
 └─ dev-seed-auth.mjs    로컬 개발 계정
 apps/web/                React SPA
