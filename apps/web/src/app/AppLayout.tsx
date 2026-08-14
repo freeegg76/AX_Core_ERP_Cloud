@@ -29,6 +29,14 @@ const MENU = [
       { key: '/partner/vendors', label: '거래처' },
     ],
   },
+  {
+    key: 'sales',
+    label: 'SALES',
+    children: [
+      { key: '/sales/pipelines', label: '파이프라인' },
+      { key: '/sales/contracts', label: '계약' },
+    ],
+  },
 ];
 
 export function AppLayout() {

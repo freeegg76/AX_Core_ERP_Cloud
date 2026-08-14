@@ -127,7 +127,55 @@ line('거래처 삭제', await api('DELETE', 'partner_vendor?vendor_id=eq.VD900'
 line('정책 삭제 (참조 해제 후)', await api('DELETE', 'partner_term?term_id=eq.EOM30', admin), '1건');
 line('CURM31 정리', await api('DELETE', 'partner_term?term_id=eq.CURM31', admin), '1건');
 
-console.log('\n═══ 11. 정리 ═══');
+console.log('\n═══ 11. SALES — 액티비티 채번 (C5, §9.12) ═══');
+await api('POST', 'sales_pipeline', admin,
+  { company_id: 'DEMO', entity_id: 'D1', pipeline_id: 'PL900', client_name: '가나상사',
+    pipeline_type: '0', stage: '0' });
+
+// ⚠ activity_id 를 일부러 보낸다 — 트리거가 무시하고 자체 채번해야 한다
+const a1 = await api('POST', 'sales_pipeline_detail', admin,
+  { company_id: 'DEMO', entity_id: 'D1', pipeline_id: 'PL900',
+    activity_id: '클라이언트가-정한-값', activity_type: '2', content: '킥오프 미팅' });
+const a2 = await api('POST', 'sales_pipeline_detail', admin,
+  { company_id: 'DEMO', entity_id: 'D1', pipeline_id: 'PL900',
+    activity_type: '1', content: '후속 통화' });
+const id1 = a1.body?.[0]?.activity_id, id2 = a2.body?.[0]?.activity_id;
+console.log(`  클라이언트 전송값 무시            ${a1.status}   실제="${id1}"  ${String(id1).startsWith('ACT') ? '✔' : '✗'}`);
+console.log(`  동시 생성 시 고유성              ${a2.status}   실제="${id2}"  ${id1 !== id2 ? '✔ (서로 다름)' : '✗ 충돌'}`);
+
+console.log('\n═══ 12. SALES — stage 트리거가 일자를 관리한다 (§7.3) ═══');
+const st = async (stage) =>
+  (await api('PATCH', 'sales_pipeline?pipeline_id=eq.PL900', admin, { stage })).body?.[0];
+let r = await st('3');
+console.log(`  진행 단계 변경 → adjusted_date  ${r?.adjusted_date ? '기록됨 ✔' : '없음 ✗'}  closed_date=${r?.closed_date ?? 'null'}`);
+r = await st('5');
+console.log(`  Closed(5) 진입 → closed_date   ${r?.closed_date ? '기록됨 ✔' : '없음 ✗'}`);
+r = await st('4');
+console.log(`  재오픈(4) → closed_date 해제    ${r?.closed_date === null ? '해제됨 ✔' : `남음 ✗ (${r?.closed_date})`}`);
+
+console.log('\n═══ 13. SALES — 계약 제약 · 전표 연결 RPC ═══');
+line('종료일 < 시작일', await api('POST', 'sales_contract', admin,
+  { company_id: 'DEMO', entity_id: 'D1', contract_id: 'CT900', contract_type: '0',
+    client_id: 'CL001', start_date: '2026-12-31', end_date: '2026-01-01', status: '0' }),
+  'ck_ct_dates 기대');
+line('계약 생성', await api('POST', 'sales_contract', admin,
+  { company_id: 'DEMO', entity_id: 'D1', contract_id: 'CT900', contract_type: '0',
+    client_id: 'CL001', start_date: '2026-01-01', end_date: '2026-12-31', status: '0' }), '201');
+line('전표번호만 직접 PATCH', await api('PATCH',
+  'sales_contract?contract_id=eq.CT900&contract_type=eq.0', admin, { ledger_no: 1 }),
+  'ck_ct_ledger 기대');
+line('없는 전표 연결 RPC', await rpc('ax_sales_contract_link_ledger', admin,
+  { p_contract_id: 'CT900', p_contract_type: '0', p_ledger_date: '2026-05-01', p_ledger_no: 99 }),
+  'AX-50343 기대');
+line('한쪽만 넘긴 연결 RPC', await rpc('ax_sales_contract_link_ledger', admin,
+  { p_contract_id: 'CT900', p_contract_type: '0', p_ledger_date: '2026-05-01' }),
+  'AX-50341 기대');
+
+console.log('\n═══ 14. SALES 정리 ═══');
+line('계약 삭제', await api('DELETE', 'sales_contract?contract_id=eq.CT900', admin), '1건');
+line('파이프라인 삭제', await api('DELETE', 'sales_pipeline?pipeline_id=eq.PL900', admin), '1건 (활동 CASCADE)');
+
+console.log('\n═══ 15. 정리 ═══');
 line('부서 T2 삭제', await api('DELETE', 'system_team?team_id=eq.T2', admin), '204');
 line('Pod P2 삭제', await api('DELETE', 'system_pod?pod_id=eq.P2', admin), '204');
 line('기수 Y2028 삭제', await api('DELETE', 'system_year?company_year_id=eq.Y2028', admin), '204');

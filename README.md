@@ -40,7 +40,8 @@ Supabase
 | `apps/web/src/lib` | supabase · errors 어댑터 · query(Range 페이징·escapeLike) · rpc 20건 래퍼 · session |
 | `apps/web/src/shared/ui` | AppToolbar · HeadDetailLayout · LookupPopup · DirtyFormGuard · ConfirmDialog · StatusBadge · SearchBar |
 | `apps/web/src/shared/hooks` | useMasterCrud(Head/Detail 공통 흐름) · useLookup |
-| 테스트 | Vitest 40건 (status 극성 31 · 오류 어댑터 9) |
+| `apps/web/src/domain` | 프레임워크 비의존 순수 TS — Pipeline 전이 규칙 · Activity 링크 검증 |
+| 테스트 | Vitest 62건 (status 극성 31 · 오류 어댑터 11 · 도메인 20) |
 
 **Phase 2(SYSTEM) 완료** — 그룹 · 회사 · Pod · 부서 · 직원 · 회사 기수 6화면.
 
@@ -54,7 +55,13 @@ Supabase
 지급정책 화면은 **지급일 미리보기가 저장 경로와 같은 RPC** 를 호출한다 —
 v1.1 §15.1 이 경고한 "미리보기와 저장이 갈린다"를 설계에서 제거한 것이다(§9.11).
 
-SALES · FINANCE 는 미착수다. 로드맵은 설계서 §16 참조.
+**Phase 4(SALES) 완료** — 파이프라인(+액티비티) · 계약.
+
+`domain/sales/pipeline.ts` 가 **stage 전이 규칙을 소유**한다(§7.3 "속성 직접 대입 금지").
+화면은 `pipeline.close()` 처럼 의미 있는 메서드를 부르고, 결과 stage 만 일반 PATCH 로
+보낸다 — 별도 RPC 가 아니며 날짜는 트리거가 채운다(§11.3).
+
+FINANCE 는 미착수다. 로드맵은 설계서 §16 참조.
 
 ---
 
@@ -123,7 +130,8 @@ RLS 적용 · FORCE RLS · 필수 정책 완비 · anon 실행함수 0 · `searc
 
 마스터 CRUD · 권한 상향(§6.4) · 부서 순환의존 · 역할변경 RPC 3종 거부 ·
 컬럼 GRANT · 삭제 참조검사 · `CK_term_shape` · **지급일 계산 5케이스**(월말·윤년) ·
-FK RESTRICT.
+FK RESTRICT · **액티비티 채번**(클라이언트 값 무시·충돌 시 시퀀스) · stage 트리거 일자관리 ·
+계약 복합 PK 제약 · 전표 연결 RPC.
 
 > ⚠ **RLS 는 UPDATE/DELETE 에서 조용히 0건이 된다.** INSERT 처럼 42501 을 던지지 않고
 > 정책이 행을 걸러낼 뿐이라, 상태코드만 보면 성공처럼 보인다. 그래서 검증은 영향 행 수를

@@ -11,6 +11,8 @@ import { YearPage } from '@/features/system/YearPage';
 import { TermPage } from '@/features/partner/TermPage';
 import { ClientPage } from '@/features/partner/ClientPage';
 import { VendorPage } from '@/features/partner/VendorPage';
+import { PipelinePage } from '@/features/sales/PipelinePage';
+import { ContractPage } from '@/features/sales/ContractPage';
 
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
@@ -34,6 +36,9 @@ export const router = createBrowserRouter([
       { path: 'partner/terms', element: <TermPage /> },
       { path: 'partner/clients', element: <ClientPage /> },
       { path: 'partner/vendors', element: <VendorPage /> },
+      // Phase 4 — SALES (설계서 §16 : 파이프라인 → 액티비티 → 계약)
+      { path: 'sales/pipelines', element: <PipelinePage /> },
+      { path: 'sales/contracts', element: <ContractPage /> },
     ],
   },
 ]);
