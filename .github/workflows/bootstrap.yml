@@ -1,0 +1,47 @@
+﻿# AX Bridge — 초기 관리자 부트스트랩
+# 설계서 §6.5 · §18.4
+#
+# 마이그레이션 14 가 SYSTEM 조직 4행을 만들고, 이 워크플로가 ② 단계를 수행한다.
+#
+# ⚠ 왜 SQL 로 auth.users 를 직접 INSERT 하지 않는가 —
+#    GoTrue 의 비밀번호 해시 형식·identities 연결·이메일 확인 상태는 내부 구현이며
+#    버전에 따라 바뀐다. SQL 로 넣은 계정은 조용히 로그인 불가가 되거나 업그레이드에서
+#    깨진다. 반드시 Admin API 를 경유한다.
+#
+# ⚠ 이 워크플로만 service_role 키를 쓴다. 프론트 빌드 잡과 절대 같은 job 에 두지 않는다.
+
+name: Bootstrap Admin
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: '초기 관리자를 생성/연결합니다. "BOOTSTRAP" 을 입력하세요.'
+        required: true
+
+jobs:
+  bootstrap:
+    name: 초기 관리자 생성
+    runs-on: ubuntu-latest
+    environment: bootstrap        # ← 전용 환경. 시크릿이 여기에만 있다.
+    steps:
+      - name: 입력 확인
+        run: |
+          [ "${{ github.event.inputs.confirm }}" = "BOOTSTRAP" ] || {
+            echo "❌ 확인 문자열이 일치하지 않습니다"; exit 1; }
+
+      - uses: actions/checkout@v4
+
+      - name: Admin API 로 계정 생성 + 프로필 연결
+        env:
+          SUPABASE_URL:      ${{ secrets.SUPABASE_URL }}
+          SERVICE_ROLE_KEY:  ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          ADMIN_EMAIL:       ${{ secrets.BOOTSTRAP_ADMIN_EMAIL }}
+          ADMIN_PASSWORD:    ${{ secrets.BOOTSTRAP_ADMIN_PASSWORD }}
+        run: node scripts/bootstrap-admin.mjs
+
+      - name: 안내
+        run: |
+          echo "✔ 부트스트랩 완료"
+          echo "  최초 로그인 후 반드시 비밀번호를 변경하세요."
+          echo "  이후 직원·역할 관리는 화면에서 수행합니다 (§6.3)."

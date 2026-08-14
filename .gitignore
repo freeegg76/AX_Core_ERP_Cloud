@@ -9,3 +9,7 @@ Planning_Docs/
 node_modules/
 .DS_Store
 Thumbs.db
+
+# Supabase 로컬 상태 (커밋 대상 아님)
+supabase/.branches/
+supabase/.temp/

@@ -1,0 +1,74 @@
+﻿# AX Bridge — DB 배포
+# 설계서 §18.3 CI/CD · §18.5 백업·복구
+#
+# ⚠ 배포 스큐 — 프론트가 먼저 뜨면 아직 없는 RPC 를 호출한다.
+#    Vercel 의 Git 자동배포를 끄고(vercel.json 의 ignoreCommand),
+#    **DB 마이그레이션 성공 후 deploy hook 으로만 프로덕션을 승격**한다.
+#
+# ⚠ 롤백이 없다 — `supabase db push` 에 down 마이그레이션 관행이 없다.
+#    복구 경로는 ① 전진 수정 마이그레이션 ② PITR 두 가지뿐이다.
+#    그래서 production 환경에 **수동 승인 게이트**를 둔다.
+
+name: Deploy DB
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/**'
+      - 'supabase/config.toml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-db-production
+  cancel-in-progress: false      # 마이그레이션 중간 취소는 위험하다
+
+jobs:
+  deploy:
+    name: production 반영
+    runs-on: ubuntu-latest
+    environment: production      # ← 수동 승인 게이트
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.114.0
+
+      - name: 프로젝트 연결
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: supabase link --project-ref "${{ secrets.SUPABASE_PROJECT_ID }}"
+
+      # 적용 전에 무엇이 적용될지 남긴다 — 사고 시 유일한 단서가 된다.
+      - name: 미적용 마이그레이션 확인
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: supabase migration list --linked
+
+      - name: 마이그레이션 적용
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: supabase db push --linked
+
+      # Auth Hook 등록 등 config.toml 의 설정을 반영한다(§6.2).
+      # 이것이 빠지면 클레임이 주입되지 않아 전 사용자가 권한 0 이 된다.
+      - name: 프로젝트 설정 반영
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: supabase config push --project-ref "${{ secrets.SUPABASE_PROJECT_ID }}"
+
+      # 운영에서도 보안 자세를 재확인한다. 로컬에서 통과했어도 운영 설정이 다를 수 있다.
+      - name: 운영 보안 회귀 검사
+        env:
+          PGPASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          psql "postgresql://postgres.${{ secrets.SUPABASE_PROJECT_ID }}@${{ secrets.SUPABASE_DB_HOST }}:5432/postgres" \
+               -v ON_ERROR_STOP=1 -f scripts/check-security.sql
+
+      # ⚠ DB 성공 이후에만 프론트를 승격한다 (배포 스큐 대응, §18.3)
+      - name: 프론트엔드 승격
+        if: success()
+        run: curl -fsS -X POST "${{ secrets.VERCEL_DEPLOY_HOOK }}"

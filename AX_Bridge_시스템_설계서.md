@@ -242,22 +242,32 @@ ax-bridge-cloud/
 마이그레이션은 **역할별로 파일을 분리**한다. 실행 순서는 파일명 타임스탬프가 강제하므로 v1.1 처럼 "실행 순서를 반드시 지킨다"는 운영 규약이 필요 없다.
 
 ```text
-supabase/migrations/
-├─ 20260814000100_extensions.sql       # pgcrypto · pg_trgm
-├─ 20260814000200_auth_helpers.sql     # auth_company_id() · auth_entity_id() · auth_role() · ax_raise()
+supabase/migrations/                     ← 구현 결과와 일치 (16개)
+├─ 20260814000100_extensions.sql       # pgcrypto · citext · pg_trgm
+├─ 20260814000200_auth_helpers.sql     # ax_raise() · auth_company_id() · auth_role_rank() …
 ├─ 20260814000300_tables_system.sql    # 업무 테이블 DDL — 01+08+09 폴딩 베이스라인
 ├─ 20260814000400_tables_partner.sql
 ├─ 20260814000500_tables_sales.sql
 ├─ 20260814000600_tables_finance.sql
+├─ 20260814000650_auth_hook.sql        # ★ Access Token Hook · auth_role_rank_live() (아래 ⚠)
 ├─ 20260814000700_views.sql            # 마스킹·조인 조회 뷰 (§10.3)
-├─ 20260814000800_functions_finance.sql# RPC 함수 (§10.2)
-├─ 20260814000900_functions_misc.sql
-├─ 20260814001000_triggers.sql         # 채번(C5) · 보호(마감·승인) 트리거 (§10.5)
-├─ 20260814001100_policies.sql         # RLS 정책 전량 (§5)
-├─ 20260814001200_grants.sql           # 컬럼 단위 GRANT (승인·마감 컬럼 차단, §5)
-├─ 20260814001300_seed_gl.sql          # 표준 GL 355행 (finance_GL_seed) — 멱등
-└─ 20260814001400_bootstrap.sql        # SYSTEM 조직 + admin (§6.3) — 멱등
+├─ 20260814000800_functions_finance.sql# RPC 함수 13건 (§10.2)
+├─ 20260814000900_functions_misc.sql   # RPC 함수 7건
+├─ 20260814001000_triggers.sql         # 채번(C5) · 보호(마감·승인) · 참조검증 (§10.5)
+├─ 20260814001100_policies.sql         # RLS 정책 전량 78건 (§5)
+├─ 20260814001200_grants.sql           # 컬럼 단위 GRANT (승인·마감 컬럼 차단, §5.3)
+├─ 20260814001300_seed_gl.sql          # 표준 GL 355행 — 기계 변환, 수기 편집 금지
+├─ 20260814001350_seed_gl_fix.sql      # ★ seed 데이터 결함 1건 보정 (아래 ⚠)
+└─ 20260814001400_bootstrap.sql        # SYSTEM 조직 + ax_bootstrap_admin() (§6.5)
 ```
+
+> **⚠ `000650_auth_hook.sql` 이 별도인 이유** — `auth_role_rank_live()` · `ax_access_token_hook()` 은
+> `system_employee` 를 참조한다. `language sql` 함수는 **생성 시점에 본문이 검증**되므로
+> 테이블보다 먼저 만들 수 없다. 순수 클레임 헬퍼(`000200`)와 테이블 의존 헬퍼를 분리한다.
+>
+> **⚠ `001350_seed_gl_fix.sql` 이 별도인 이유** — `001300` 은 원본에서 **기계 변환**한 산출물이라
+> 수기 편집 대상이 아니다. 원천 데이터 결함(`2070000` 의 `contra_gl` 자기참조)의 보정은
+> 감사 가능하도록 별도 파일로 분리한다. 근거는 파일 주석에 있다.
 
 ### 4.3 프론트엔드 (`apps/web/src`)
 
@@ -1875,6 +1885,21 @@ v2.0 범위 밖이나 **의사결정이 필요한 항목**을 명시한다. 구�
 | 4 | **Preview 환경의 DB 분리** — Vercel Preview 가 프로덕션 DB 를 가리키면 안 된다. Supabase Branching(유료) vs 별도 staging 프로젝트 | [§18.1](#181-환경-구성) | 비용·운영 결정 |
 | 5 | **Rate Limit 정밀도 손실** — "사용자당 120 req/min"을 서버 없이 유지할 수 없다 | [§19.5](#195-rate-limit) | 요구 완화 승인 |
 | 6 | **`system_company`/`system_entity` CUD 권한 상향** — v1.1 의 EDITOR → ADMIN 으로 바꾸었다. 기존 권한 분포를 변경하는 결정 | [§6.4](#64-권한role-계층-fr-ui-07) | **고객 확인 필요** |
+| 7 | **표준 GL seed 데이터 결함** — `2070000 감가상각누계액` 의 `contra_gl` 이 자기 자신을 가리킨다. 03.유형자산 블록의 나머지 24건은 예외 없이 "바로 위 자산계정"을 가리키므로 `2060000 기계장치` 로 보정했다. **원천 `AX_Bridge.xlsx > GL` 시트 수정이 필요하다** | [부록 C.4](#c4-이식과-함께-고치는-원본-결함) | **원천 수정 협의** |
+
+### 16.4 구현 중 확정된 사항 (Phase 0)
+
+설계 단계에서 예견하지 못했고 **실제로 실행해 보아야 드러난** 것들이다. 해당 절에 반영을 마쳤다.
+
+| # | 사항 | 반영 위치 |
+| - | ---- | --------- |
+| 1 | **부서↔직원 순환 의존으로 신규 회사를 만들 수 없었다.** v1.1 은 SYSTEM 조직에만 예외를 둬 우회했고, 결과적으로 신규 회사 생성 경로가 없었다(`usp_system_team_save` 의 50131/50132 가 동일하게 막는다). → **지연 제약 트리거**(`deferrable initially deferred`)로 COMMIT 시점 검증으로 전환해 순환을 실제로 푼다 | [§9.9](#99-참조-무결성과-soft-disabledelete-지침-20) · 마이그레이션 10 |
+| 2 | **`contra_gl` 검증이 BEFORE ROW 면 표준 GL 재생성이 항상 실패한다.** 355행을 한 번의 `INSERT…SELECT` 로 적재하는데 24행이 같은 테이블의 다른 행을 참조하기 때문이다. → 동일하게 지연 제약으로 전환 | [§7.4](#74-finance) · 마이그레이션 10 |
+| 3 | **`security_invoker` 뷰와 컬럼 권한 회수는 충돌한다.** 뷰가 호출자 권한으로 실행되므로 `card_number` SELECT 를 회수하면 **뷰 자신도 그 컬럼을 읽지 못한다.** → 마스킹 값만 돌려주는 `SECURITY DEFINER` 함수(`ax_bank_card_masked`) 경유 + `is_card` 저장 계산열 | [§19.3](#193-카드번호-마스킹) · 마이그레이션 07 |
+| 4 | **트리거 함수는 `SECURITY DEFINER` 여야 한다.** ① 컬럼 GRANT 로 회수한 컬럼을 트리거는 읽어야 하고 ② 검증 조회가 RLS 로 필터되면 안 된다(최후 SUPER 검사는 전 테넌트를 세어야 하는데 호출자 권한이면 자기 회사만 보여 항상 통과한다) | [§10.5](#105-트리거-db-계층-최후-방어선) |
+| 5 | **`numeric` 컬럼에 `ax_safe_int(text)` 를 쓰면 안 된다.** `actual_year` 는 `numeric(10,2)` 라 `'2026.00'` 이 되어 정규식 `^-?\d+$` 이 거부한다. 원본 `CONVERT(int, …)` 는 절삭이므로 **`trunc(x)::int`** 가 정확한 대응이다. 마감 관련 11개소 | [부록 C.3](#c3-기계적-치환) |
+| 6 | **식별자를 전부 소문자로 정규화**했다. 원본의 `Team_id`·`employee_Id`·`DRCR` 은 PostgreSQL 에서 따옴표 없이는 소문자로 접히며, 따옴표를 붙이면 모든 질의가 오염된다. 부수 효과로 [§9.1](#91-전표-저장-검증-하나의-트랜잭션-지침-1724) 이 경고한 "JSON 키 대소문자 불일치로 값이 조용히 NULL" 위험이 **소멸**한다 | 마이그레이션 02 헤더 |
+| 7 | `sales_pipeline_detail.[type]` → **`activity_type`** 개명. `type` 은 원본에서도 대괄호로 감싸야 했던 예약어다 | 마이그레이션 05 |
 
 ---
 

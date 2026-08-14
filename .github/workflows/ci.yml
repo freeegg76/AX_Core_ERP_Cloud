@@ -1,0 +1,88 @@
+﻿# AX Bridge — PR 검증
+# 설계서 §18.3 CI/CD
+#
+# 핵심 원칙 : 베이스라인부터 처음까지 재현되지 않는 마이그레이션은 머지되지 않는다.
+#   `supabase db push` 에는 롤백이 없으므로(§18.5), 이 재현 검증이 사실상의 롤백 대비다.
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  database:
+    name: DB — 재현 · 보안 · 기능
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.114.0
+
+      # ── 1. 전체 재현 — 마이그레이션 16개 + seed 가 처음부터 적용되는가
+      - name: 로컬 스택 기동 (마이그레이션 전량 + seed 적용)
+        run: supabase start -x realtime,storage-api,imgproxy,studio,edge-runtime,logflare,vector,supavisor,mailpit
+
+      # ── 2. 보안 회귀 (§19.1) — RLS·정책·security_invoker·컬럼권한
+      #     RLS 정책 약 80건 중 한 줄 누락이 조용한 데이터 유출이 되므로
+      #     이 검사가 사실상 유일한 그물이다.
+      - name: 보안 회귀 검사
+        run: |
+          psql "$(supabase status -o env | grep '^DB_URL=' | cut -d= -f2- | tr -d '"')" \
+               -v ON_ERROR_STOP=1 -f scripts/check-security.sql
+
+      # ── 3. 기능 스모크 — 테넌트 격리·역할·채번·마감왕복·마스킹
+      - name: 기능 스모크 테스트
+        run: |
+          psql "$(supabase status -o env | grep '^DB_URL=' | cut -d= -f2- | tr -d '"')" \
+               -v ON_ERROR_STOP=1 -f supabase/tests/smoke.sql
+
+      # ── 4. 스키마 드리프트 — 마이그레이션이 실제 스키마와 일치하는가
+      #     출력이 비어야 통과한다. `db diff` 를 생성이 아니라 **단언**으로 쓴다.
+      - name: 스키마 드리프트 검사
+        run: |
+          supabase db diff --local --schema public > /tmp/drift.sql
+          if [ -s /tmp/drift.sql ]; then
+            echo "❌ 마이그레이션에 반영되지 않은 스키마 차이가 있습니다:"
+            cat /tmp/drift.sql
+            exit 1
+          fi
+          echo "✔ 스키마 드리프트 없음"
+
+  guards:
+    name: 가드 — 시크릿 · 마이그레이션 불변성
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ── §19.2 하드 가드 — service_role 키가 프론트엔드에 들어가면 즉시 실패
+      #     anon 키는 공개 정보라 무방하다. service_role 은 BYPASSRLS 이므로 절대 안 된다.
+      - name: service_role 키 노출 검사
+        run: |
+          if grep -rniE 'service_role' apps packages 2>/dev/null; then
+            echo "❌ 프론트엔드에서 service_role 참조가 발견되었습니다 (§19.2)"
+            exit 1
+          fi
+          echo "✔ service_role 미노출"
+
+      # ── §16.1 — 기존 마이그레이션은 수정·삭제할 수 없다.
+      #     이미 적용된 환경에 반영되지 않아 환경 간 스키마가 갈라진다.
+      - name: 마이그레이션 불변성 검사
+        if: github.event_name == 'pull_request'
+        run: |
+          CHANGED=$(git diff --diff-filter=MD --name-only \
+                    origin/${{ github.base_ref }}...HEAD -- supabase/migrations/ || true)
+          if [ -n "$CHANGED" ]; then
+            echo "❌ 기존 마이그레이션이 수정/삭제되었습니다 — 새 파일을 추가하세요 (§16.1):"
+            echo "$CHANGED"
+            exit 1
+          fi
+          echo "✔ 마이그레이션 추가만 확인됨"

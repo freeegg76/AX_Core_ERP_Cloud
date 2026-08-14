@@ -1,0 +1,78 @@
+# AX Bridge — Supabase 로컬 스택 설정
+# 설계서 §18.1 환경 구성 · §6.2 클레임 주입
+#
+# 이 파일은 버전관리 대상이다. 운영 프로젝트에는 `supabase config push` 로 반영한다.
+
+project_id = "ax-bridge-cloud"
+
+[api]
+enabled = true
+port = 54321
+# PostgREST 가 노출하는 스키마. 업무 오브젝트는 전부 public 에 있다.
+schemas = ["public"]
+extra_search_path = ["public", "extensions"]
+# 설계서 §11.1 — 페이징 기본 50, 최대 500 (C9)
+max_rows = 500
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 15
+
+[db.pooler]
+enabled = false
+
+[studio]
+enabled = true
+port = 54323
+
+[inbucket]
+enabled = true
+port = 54324
+
+[storage]
+# 설계서 §3 — v2.0 범위 밖. FR 이 생기면 활성화한다.
+enabled = false
+
+[realtime]
+# 설계서 §3 — v2.0 범위 밖.
+enabled = false
+
+[auth]
+enabled = true
+site_url = "http://localhost:5173"
+additional_redirect_urls = ["http://localhost:5173"]
+
+# 설계서 §6.2 — 액세스 토큰 수명을 15분으로 줄인다.
+# 권한 강등 후 잔여 특권 창을 좁히기 위한 것이며, 갱신은 supabase-js 가 자동 처리하므로
+# 사용자 체감은 없다.
+jwt_expiry = 900
+enable_refresh_token_rotation = true
+refresh_token_reuse_interval = 10
+
+# 설계서 §6.1 — 이메일 로그인. 가입은 관리자만 수행한다(초대 방식).
+enable_signup = false
+enable_anonymous_sign_ins = false
+
+[auth.email]
+enable_signup = false
+enable_confirmations = true
+double_confirm_changes = true
+# 설계서 §6.1 — 비밀번호 정책은 플랫폼이 보장한다.
+[auth.email.template.invite]
+subject = "AX Bridge 계정 초대"
+
+[auth.sessions]
+# 유휴 24시간 · 최대 7일
+inactivity_timeout = "24h"
+timebox = "168h"
+
+# ── 설계서 §6.2 Custom Access Token Hook ────────────────────────────────────
+# RLS 정책 전체가 JWT 클레임에 의존하므로, 토큰 발급 시점에 스코프와 역할을 주입한다.
+# 이 훅이 등록되지 않으면 auth_role_rank() 가 0 을 반환해 모든 정책이 거부된다(기본값=거부).
+[auth.hook.custom_access_token]
+enabled = true
+uri = "pg-functions://postgres/public/ax_access_token_hook"
+
+[analytics]
+enabled = false
